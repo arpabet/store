@@ -67,7 +67,7 @@ func (t *EnumerateOperation) Do(cb func(*RawEntry) bool) error {
 	if t.seekBin == nil {
 		t.seekBin = t.prefixBin
 	}
-	return t.DataStore.EnumerateRaw(t.Context, t.prefixBin, t.seekBin, t.batchSize, t.reverse, t.onlyKeys, cb)
+	return t.DataStore.EnumerateRaw(t.Context, t.prefixBin, t.seekBin, t.batchSize, t.onlyKeys, t.reverse, cb)
 }
 
 func (t *EnumerateOperation) DoProto(factory func() proto.Message, cb func(*ProtoEntry) bool) error {

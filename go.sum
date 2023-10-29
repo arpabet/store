@@ -1,5 +1,5 @@
-github.com/codeallergy/glue v1.1.0 h1:1+EKvwlSdHrYf332w2brxbpZQftdEQS6EKDiCLK6cw0=
-github.com/codeallergy/glue v1.1.0/go.mod h1:7FDCk+rgtr7r51AjDEBcBaZDHHl+TJKKWcTSXV/K8po=
+github.com/codeallergy/glue v1.1.4 h1:g1HWa3lJuSz24ufxUyaE+c0OZvlXEVbECzJe1GiRc4s=
+github.com/codeallergy/glue v1.1.4/go.mod h1:7FDCk+rgtr7r51AjDEBcBaZDHHl+TJKKWcTSXV/K8po=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
