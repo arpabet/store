@@ -7,7 +7,7 @@ package store
 
 import (
 	"context"
-	"github.com/codeallergy/glue"
+	"go.arpabet.com/glue"
 	"google.golang.org/protobuf/proto"
 	"io"
 	"reflect"

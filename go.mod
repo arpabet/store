@@ -3,7 +3,7 @@ module github.com/keyvalstore/store
 go 1.17
 
 require (
-	github.com/codeallergy/glue v1.1.4
+	go.arpabet.com/glue v1.0.0
 	google.golang.org/protobuf v1.28.1
 )
 
