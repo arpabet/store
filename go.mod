@@ -1,4 +1,4 @@
-module github.com/keyvalstore/store
+module go.arpabet.com/store
 
 go 1.17
 
