@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023 Zander Schwid & Co. LLC.
+ * Copyright (c) 2025 Karagatan LLC.
  * SPDX-License-Identifier: BUSL-1.1
  */
 
@@ -31,7 +31,7 @@ var (
 
 	// ErrTooBigTxn is returned if too many writes are fit into a single transaction.
 	ErrTooBigTxn = errors.New("transaction is too big")
-	
+
 	// ErrEmptyKey is returned if an empty key is passed on an update function.
 	ErrEmptyKey = errors.New("empty key")
 
