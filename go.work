@@ -1,0 +1,10 @@
+go 1.23
+
+use (
+	.
+	./providers/badger
+	./providers/bbolt
+	./providers/bolt
+	./providers/mem
+	./providers/pebble
+)
