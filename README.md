@@ -19,6 +19,7 @@ store/                      module go.arpabet.com/store              (the interf
   providers/bbolt/          module .../providers/bbolt               (etcd bbolt)
   providers/bolt/           module .../providers/bolt                (boltdb, legacy)
   providers/mem/            module .../providers/mem                 (in-memory cache)
+  providers/rosedb/         module .../providers/rosedb              (Bitcask, native TTL)
   middleware/crypto/        module .../middleware/crypto             (AES-GCM at rest)
   middleware/otel/          module .../middleware/otel               (OpenTelemetry tracing)
 ```
@@ -37,6 +38,7 @@ providers/pebble | PebbleDB v2 | Y | Y | Y | Y | N | Y | via crypto | App data
 providers/bbolt  | etcd bbolt  | Y | Y | Y | Y | N | Y | via crypto | Config
 providers/bolt   | boltdb (legacy) | Y | Y | Y | Y | N | Y | via crypto | Config (legacy)
 providers/mem    | ttlcache v3 | Y | Y | Y | Y | N | N | via crypto | Hot data
+providers/rosedb | rosedb (Bitcask) | Y | Y | Y | Y | N | Y | via crypto | App data
 
 Batch writes (`s.Batch(ctx).Put(...).Do()` / `SetBatchRaw`) are available on every
 store; `BatchAtomic` marks the ones where a batch is all-or-nothing (single
@@ -52,7 +54,9 @@ qualifies.
 TTL, versioning and compare-and-set on the non-Badger engines are provided by a
 shared value envelope (`version | expiresAt | value`) with lazy expiry; watch on
 those engines is served by an in-process fan-out hub. Badger uses its native
-TTL, MVCC versions, transactions and `Subscribe`.
+TTL, MVCC versions, transactions and `Subscribe`. rosedb uses native TTL (disk
+expiry — so it needs no sweeper) and native ordered iteration and atomic batches,
+with the envelope carrying the version and watch served by the hub.
 
 **Watch semantics.** Watch is **in-process** (mutations through this process's
 handle only; a different process writing the same file is not observed) and

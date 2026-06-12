@@ -31,7 +31,7 @@ func (t *implBadgerStore) SetBatchRaw(ctx context.Context, entries []store.RawEn
 
 	for i := range entries {
 		e := &entries[i]
-		entry := &badger.Entry{Key: e.Key, Value: e.Value, UserMeta: byte(0x0)}
+		entry := &badger.Entry{Key: e.Key, Value: e.Value, UserMeta: valueUserMeta}
 		if e.Ttl > 0 {
 			entry.ExpiresAt = uint64(time.Now().Unix() + int64(e.Ttl))
 		}

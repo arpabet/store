@@ -90,7 +90,7 @@ func (t *implBadgerStore) SetRaw(ctx context.Context, key, value []byte, ttlSeco
 
 	return t.doInTransaction(ctx, func(txn *badger.Txn) error {
 
-		entry := &badger.Entry{Key: key, Value: value, UserMeta: byte(0x0)}
+		entry := &badger.Entry{Key: key, Value: value, UserMeta: valueUserMeta}
 
 		if ttlSeconds > 0 {
 			entry.ExpiresAt = uint64(time.Now().Unix() + int64(ttlSeconds))
@@ -149,7 +149,7 @@ func (t *implBadgerStore) UpdateRaw(ctx context.Context, key []byte, cb func(ent
 		entry := &badger.Entry{
 			Key:      key,
 			Value:    rawEntry.Value,
-			UserMeta: byte(0x0)}
+			UserMeta: valueUserMeta}
 
 		if rawEntry.Ttl > 0 {
 			entry.ExpiresAt = uint64(time.Now().Unix() + int64(rawEntry.Ttl))
@@ -165,7 +165,7 @@ func (t *implBadgerStore) CompareAndSetRaw(ctx context.Context, key, value []byt
 	var updated bool
 	err := t.doInTransaction(ctx, func(txn *badger.Txn) error {
 
-		entry := &badger.Entry{Key: key, Value: value, UserMeta: byte(0x0)}
+		entry := &badger.Entry{Key: key, Value: value, UserMeta: valueUserMeta}
 
 		if ttlSeconds > 0 {
 			entry.ExpiresAt = uint64(time.Now().Unix() + int64(ttlSeconds))
@@ -214,7 +214,7 @@ func (t *implBadgerStore) TouchRaw(ctx context.Context, key []byte, ttlSeconds i
 			}
 		}
 
-		entry := &badger.Entry{Key: key, Value: value, UserMeta: byte(0x0)}
+		entry := &badger.Entry{Key: key, Value: value, UserMeta: valueUserMeta}
 
 		if ttlSeconds > 0 {
 			entry.ExpiresAt = uint64(time.Now().Unix() + int64(ttlSeconds))

@@ -8,6 +8,7 @@ use (
 	./providers/bolt
 	./providers/mem
 	./providers/pebble
+	./providers/rosedb
 	./middleware/crypto
 	./middleware/compress
 	./middleware/otel

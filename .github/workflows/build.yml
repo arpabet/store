@@ -26,6 +26,7 @@ jobs:
           - { module: providers/bolt, testflags: "-cover" }
           - { module: providers/mem, testflags: "-race -cover" }
           - { module: providers/pebble, testflags: "-race -cover" }
+          - { module: providers/rosedb, testflags: "-race -cover" }
           - { module: middleware/crypto, testflags: "-race -cover" }
           - { module: middleware/crypto/age, testflags: "-race -cover" }
           - { module: middleware/crypto/kms/aws, testflags: "-race -cover" }

@@ -13,8 +13,11 @@ import (
 	"go.arpabet.com/store"
 )
 
-// badger entry meta bit marking a deletion, mirrors badger's internal bitDelete.
-const bitDelete byte = 1 << 0
+// valueUserMeta tags every entry this provider writes. Badger's Subscribe
+// publishes only the entry's UserMeta (its internal delete bit is never
+// exposed), so deletes are detected by the absence of this tag: txn.Delete
+// produces an event with UserMeta 0.
+const valueUserMeta byte = 0x1
 
 var errWatchStop = errors.New("watch stopped by callback")
 
@@ -39,11 +42,11 @@ func (t *implBadgerStore) WatchRaw(ctx context.Context, prefix []byte, cb func(*
 				Key:     kv.Key,
 				Version: int64(kv.Version),
 			}
-			if len(kv.Meta) > 0 && kv.Meta[0]&bitDelete != 0 {
-				event.Type = store.WatchDelete
-			} else {
+			if len(kv.Meta) > 0 && kv.Meta[0] == valueUserMeta {
 				event.Type = store.WatchSet
 				event.Value = kv.Value
+			} else {
+				event.Type = store.WatchDelete
 			}
 			if !cb(event) {
 				return errWatchStop

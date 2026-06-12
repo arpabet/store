@@ -356,6 +356,9 @@ func (t*implPebbleStore) Compact(discardRatio float64) error {
 	if err != nil {
 		return err
 	}
+	if first == nil || last == nil {
+		return nil // empty database, nothing to compact
+	}
 	return t.db.Compact(context.Background(), first, last, true)
 }
 

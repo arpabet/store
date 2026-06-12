@@ -480,6 +480,25 @@ wait:
 	require.Equal(t, key("w"), string(got.Key))
 	require.Equal(t, store.WatchSet, got.Type)
 
+	// a remove must surface as WatchDelete (validates native delete decoding on
+	// badger and the hub delete path elsewhere); earlier duplicate WatchSet
+	// events from the produce loop may arrive first.
+	require.NoError(t, s.Remove(context.Background()).ByKey("%s", key("w")).Do())
+	delDeadline := time.After(5 * time.Second)
+delwait:
+	for {
+		select {
+		case e := <-events:
+			if e.Type == store.WatchDelete {
+				require.Equal(t, key("w"), string(e.Key))
+				break delwait
+			}
+		case <-delDeadline:
+			cancel()
+			t.Fatal("no WatchDelete received after Remove")
+		}
+	}
+
 	cancel()
 	select {
 	case <-done:
