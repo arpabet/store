@@ -51,6 +51,10 @@ themselves stores, so they compose and remain interchangeable:
 - **crypto** — encrypts values at rest with AES-GCM (keys stay plaintext for
   ordering/prefix scans). Adds the `Encrypted` capability to any backend, so
   "encrypted config in bbolt" or "encrypted hot data in mem" is a one-liner.
+  Each value stores the id of the key that sealed it, so a `Keyring` enables
+  **online key rotation**: old values keep decrypting under their old key while
+  new writes use the active key. age / AWS KMS / GCP KMS integrations are
+  separate modules implementing `Keyring`, so their SDKs aren't pulled in unless used.
 - **otel** — wraps every operation in an OpenTelemetry span (bean name, op, key;
   values are never recorded, safe for PII).
 
@@ -58,6 +62,11 @@ themselves stores, so they compose and remain interchangeable:
 base, _ := bboltstore.New("config", "config.db", 0666)
 enc, _  := cryptostore.New(base.Interface(), key) // values now encrypted at rest
 s       := otelstore.New(enc)                      // + tracing
+
+// rotation: add a new key, make it active; old values still readable
+kr := cryptostore.NewStaticKeyring().Add(1, oldKey)
+enc, _ = cryptostore.NewWithKeyring(base.Interface(), kr)
+kr.Add(2, newKey); kr.SetActive(2)               // new writes use key 2
 ```
 
 ## Releasing

@@ -9,9 +9,19 @@
 // "Encrypted" capability becomes available on engines that lack native
 // encryption (bolt, bbolt, pebble, mem) — not just Badger.
 //
-// Keys are not encrypted (they must remain comparable for ordering and prefix
+// Each stored value carries the id of the key that sealed it:
+//
+//	[ 4 bytes key-id ][ 12 bytes nonce ][ AES-GCM ciphertext ]
+//
+// The key-id is authenticated as additional data, and read resolves it through
+// the Keyring, so key rotation is online: rotate the active key and existing
+// values keep decrypting under their original key while new writes use the new
+// one. Keys are never encrypted (they must stay comparable for ordering/prefix
 // scans); only values are. TTL and version metadata are handled by the
-// underlying store and are therefore preserved.
+// underlying store and preserved.
+//
+// age, AWS KMS and GCP KMS integrations are provided as separate modules that
+// implement Keyring, so their SDKs are not pulled in unless used.
 package cryptostore
 
 import (
@@ -19,48 +29,116 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"encoding/binary"
 	"errors"
 	"io"
+	"sync"
 
 	"go.arpabet.com/store"
 )
 
 var ErrCiphertextTooShort = errors.New("cryptostore: ciphertext too short")
 
+const keyIDHeaderLen = 4
+
 type cryptoStore struct {
 	delegate store.ManagedDataStore
-	aead     cipher.AEAD
+	keyring  Keyring
+
+	mu    sync.RWMutex
+	aeads map[uint32]cipher.AEAD // cache of id -> AEAD
 }
 
-// New wraps delegate so that all values are encrypted with the given key.
-// The key length selects AES-128/192/256 (16/24/32 bytes).
+// New wraps delegate, encrypting all values with a single key (id 1). The key
+// length selects AES-128/192/256 (16/24/32 bytes). For rotation, use
+// NewWithKeyring.
 func New(delegate store.ManagedDataStore, key []byte) (store.ManagedDataStore, error) {
+	return NewWithKeyring(delegate, NewStaticKeyring().Add(1, key))
+}
+
+// NewWithKeyring wraps delegate, sealing new values with the keyring's active
+// key and decrypting existing values by their stored key id.
+func NewWithKeyring(delegate store.ManagedDataStore, keyring Keyring) (store.ManagedDataStore, error) {
+	t := &cryptoStore{delegate: delegate, keyring: keyring, aeads: make(map[uint32]cipher.AEAD)}
+	// validate the active key up front (correct length, present)
+	id, key, err := keyring.Active()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := t.aeadFor(id, key); err != nil {
+		return nil, err
+	}
+	return t, nil
+}
+
+// aeadFor returns (and caches) the AEAD for a key id. If key is nil it is
+// resolved from the keyring (read path); a non-nil key avoids a lookup (write path).
+func (t *cryptoStore) aeadFor(id uint32, key []byte) (cipher.AEAD, error) {
+	t.mu.RLock()
+	a, ok := t.aeads[id]
+	t.mu.RUnlock()
+	if ok {
+		return a, nil
+	}
+	if key == nil {
+		var err error
+		if key, err = t.keyring.Get(id); err != nil {
+			return nil, err
+		}
+	}
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, err
 	}
-	aead, err := cipher.NewGCM(block)
+	a, err = cipher.NewGCM(block)
 	if err != nil {
 		return nil, err
 	}
-	return &cryptoStore{delegate: delegate, aead: aead}, nil
+	t.mu.Lock()
+	t.aeads[id] = a
+	t.mu.Unlock()
+	return a, nil
 }
 
 func (t *cryptoStore) seal(plaintext []byte) ([]byte, error) {
-	nonce := make([]byte, t.aead.NonceSize())
+	id, key, err := t.keyring.Active()
+	if err != nil {
+		return nil, err
+	}
+	aead, err := t.aeadFor(id, key)
+	if err != nil {
+		return nil, err
+	}
+	header := make([]byte, keyIDHeaderLen)
+	binary.BigEndian.PutUint32(header, id)
+	nonce := make([]byte, aead.NonceSize())
 	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
 		return nil, err
 	}
-	return t.aead.Seal(nonce, nonce, plaintext, nil), nil
+	out := make([]byte, 0, keyIDHeaderLen+len(nonce)+len(plaintext)+aead.Overhead())
+	out = append(out, header...)
+	out = append(out, nonce...)
+	// header is authenticated as additional data so the key id cannot be swapped
+	return aead.Seal(out, nonce, plaintext, header), nil
 }
 
 func (t *cryptoStore) open(ciphertext []byte) ([]byte, error) {
-	ns := t.aead.NonceSize()
-	if len(ciphertext) < ns {
+	if len(ciphertext) < keyIDHeaderLen {
 		return nil, ErrCiphertextTooShort
 	}
-	nonce, ct := ciphertext[:ns], ciphertext[ns:]
-	return t.aead.Open(nil, nonce, ct, nil)
+	header := ciphertext[:keyIDHeaderLen]
+	id := binary.BigEndian.Uint32(header)
+	aead, err := t.aeadFor(id, nil)
+	if err != nil {
+		return nil, err
+	}
+	ns := aead.NonceSize()
+	if len(ciphertext) < keyIDHeaderLen+ns {
+		return nil, ErrCiphertextTooShort
+	}
+	nonce := ciphertext[keyIDHeaderLen : keyIDHeaderLen+ns]
+	ct := ciphertext[keyIDHeaderLen+ns:]
+	return aead.Open(nil, nonce, ct, header)
 }
 
 // --- glue / management (delegate, but report the added capability) ---
