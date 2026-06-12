@@ -1,3 +1,4 @@
+// Deprecated: boltdb/bolt was archived in 2018; use providers/bbolt (drop-in fork).
 module go.arpabet.com/store/providers/bolt
 
 go 1.25.0
