@@ -10,7 +10,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
-	"github.com/cockroachdb/pebble"
+	"github.com/cockroachdb/pebble/v2"
 	"go.arpabet.com/store"
 	"io"
 	"reflect"
@@ -182,9 +182,12 @@ func (t*implPebbleStore) EnumerateRaw(ctx context.Context, prefix, seek []byte, 
 
 func (t*implPebbleStore) doEnumerateRaw(ctx context.Context, prefix, seek []byte, batchSize int, onlyKeys bool, cb func(entry *store.RawEntry) bool) (err error) {
 
-	iter := t.db.NewIter(&pebble.IterOptions{
+	iter, err := t.db.NewIter(&pebble.IterOptions{
 		LowerBound:  seek,
 	})
+	if err != nil {
+		return err
+	}
 
 	for iter.First(); iter.Valid(); iter.Next() {
 
@@ -224,7 +227,10 @@ func (t*implPebbleStore) doEnumerateRaw(ctx context.Context, prefix, seek []byte
 }
 
 func (t*implPebbleStore) First() ([]byte, error) {
-	iter := t.db.NewIter(&pebble.IterOptions{})
+	iter, err := t.db.NewIter(&pebble.IterOptions{})
+	if err != nil {
+		return nil, err
+	}
 	defer iter.Close()
 	if !iter.First() {
 		return nil, nil
@@ -236,7 +242,10 @@ func (t*implPebbleStore) First() ([]byte, error) {
 }
 
 func (t*implPebbleStore) Last() ([]byte, error) {
-	iter := t.db.NewIter(&pebble.IterOptions{})
+	iter, err := t.db.NewIter(&pebble.IterOptions{})
+	if err != nil {
+		return nil, err
+	}
 	defer iter.Close()
 	if !iter.Last() {
 		return nil, nil
@@ -256,7 +265,7 @@ func (t*implPebbleStore) Compact(discardRatio float64) error {
 	if err != nil {
 		return err
 	}
-	return t.db.Compact(first, last, true)
+	return t.db.Compact(context.Background(), first, last, true)
 }
 
 func writeBinary(w io.Writer, b []byte) error {
@@ -272,7 +281,10 @@ func writeBinary(w io.Writer, b []byte) error {
 func (t*implPebbleStore) Backup(w io.Writer, since uint64) (uint64, error) {
 	snap := t.db.NewSnapshot()
 	defer snap.Close()
-	iter := snap.NewIter(&pebble.IterOptions{})
+	iter, err := snap.NewIter(&pebble.IterOptions{})
+	if err != nil {
+		return 0, err
+	}
 
 	for iter.First(); iter.Valid(); iter.Next() {
 

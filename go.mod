@@ -1,13 +1,13 @@
 module go.arpabet.com/store
 
-go 1.17
+go 1.25.0
 
 require (
-	go.arpabet.com/glue v1.0.0
-	google.golang.org/protobuf v1.28.1
+	go.arpabet.com/glue v1.5.0
+	google.golang.org/protobuf v1.36.11
 )
 
 require (
-	github.com/pkg/errors v0.9.1 // indirect
+	github.com/BurntSushi/toml v1.6.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

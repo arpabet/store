@@ -8,7 +8,7 @@ package badgerstore
 import (
 	"context"
 	"go.arpabet.com/store"
-	"github.com/dgraph-io/badger/v3"
+	"github.com/dgraph-io/badger/v4"
 )
 
 func wrapError(err error) error {

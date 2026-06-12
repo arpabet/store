@@ -6,7 +6,7 @@
 package pebblestore
 
 import (
-	"github.com/cockroachdb/pebble"
+	"github.com/cockroachdb/pebble/v2"
 	"reflect"
 )
 

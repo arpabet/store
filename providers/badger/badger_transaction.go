@@ -7,7 +7,7 @@ package badgerstore
 
 import (
 	"go.arpabet.com/store"
-	"github.com/dgraph-io/badger/v3"
+	"github.com/dgraph-io/badger/v4"
 )
 
 type implBadgerTransaction struct {
