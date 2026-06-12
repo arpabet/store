@@ -6,12 +6,13 @@
 package memstore
 
 import (
+	"bufio"
 	"context"
 	"encoding/binary"
 	"go.arpabet.com/store"
 	"io"
+	"github.com/jellydator/ttlcache/v3"
 	"os"
-	"github.com/patrickmn/go-cache"
 	"reflect"
 	"strings"
 	"sync"
@@ -22,10 +23,10 @@ var CacheStoreClass = reflect.TypeOf((*cacheStore)(nil))
 
 type cacheStore struct {
 	name      string
-	cache     *cache.Cache
+	cache     *ttlcache.Cache[string, []byte]
 	hub       *store.WatchHub
 
-	// go-cache locks each operation, but read-modify-write (CAS, increment,
+	// ttlcache locks each operation, but read-modify-write (CAS, increment,
 	// touch, versioned set) must be serialized across operations.
 	mu sync.Mutex
 }
@@ -35,12 +36,31 @@ func NewDefault(name string) *cacheStore {
 }
 
 func New(name string, options ...Option) *cacheStore {
-	cache := OpenDatabase(options...)
-	return &cacheStore{name: name, cache: cache, hub: store.NewWatchHub()}
+	c := OpenDatabase(options...)
+	t := &cacheStore{name: name, cache: c, hub: store.NewWatchHub()}
+	t.registerEviction()
+	go c.Start() // background expiry; safe to call again (no-op if already running)
+	return t
 }
 
-func FromCache(name string, c *cache.Cache) *cacheStore {
-	return &cacheStore{name: name, cache: c, hub: store.NewWatchHub()}
+// FromCache adopts an externally created cache. It takes ownership: do not call
+// Start/Stop on the cache yourself.
+func FromCache(name string, c *ttlcache.Cache[string, []byte]) *cacheStore {
+	t := &cacheStore{name: name, cache: c, hub: store.NewWatchHub()}
+	t.registerEviction()
+	go c.Start()
+	return t
+}
+
+// registerEviction turns native expiry into WatchDelete events. Explicit deletes
+// (EvictionReasonDeleted) are notified by RemoveRaw, so only expirations are
+// handled here to avoid double notification.
+func (t *cacheStore) registerEviction() {
+	t.cache.OnEviction(func(_ context.Context, reason ttlcache.EvictionReason, item *ttlcache.Item[string, []byte]) {
+		if reason == ttlcache.EvictionReasonExpired {
+			t.notify([]byte(item.Key()), nil, store.WatchDelete, 0)
+		}
+	})
 }
 
 func (t*cacheStore) Interface() store.ManagedDataStore {
@@ -52,11 +72,12 @@ func (t*cacheStore) BeanName() string {
 }
 
 func (t*cacheStore) Destroy() error {
+	t.cache.Stop()
 	return nil
 }
 
 func (t*cacheStore) Features() store.Capability {
-	// go-cache stores items in an unordered map, so no OrderedCapability.
+	// ttlcache stores items in an unordered map, so no OrderedCapability.
 	return store.TTLCapability | store.AtomicCapability | store.WatchCapability
 }
 
@@ -100,20 +121,16 @@ func cacheTtl(ttlSeconds int) time.Duration {
 	if ttlSeconds > 0 {
 		return time.Second * time.Duration(ttlSeconds)
 	}
-	return cache.NoExpiration
+	return ttlcache.NoTTL
 }
 
 // read decodes the envelope stored for key, treating expired entries as absent.
 func (t*cacheStore) read(key string) (version, expiresAt int64, value []byte, found bool) {
-	obj, ok := t.cache.Get(key)
-	if !ok || obj == nil {
+	item := t.cache.Get(key)
+	if item == nil {
 		return 0, 0, nil, false
 	}
-	raw, ok := obj.([]byte)
-	if !ok {
-		return 0, 0, nil, false
-	}
-	v, exp, val, _ := store.DecodeEnvelope(raw)
+	v, exp, val, _ := store.DecodeEnvelope(item.Value())
 	if store.IsExpired(exp) {
 		return 0, 0, nil, false
 	}
@@ -254,12 +271,11 @@ func (t*cacheStore) doEnumerateRaw(prefix, seek []byte, batchSize int, onlyKeys 
 
 	for key, item := range t.cache.Items() {
 
-		raw, ok := item.Object.([]byte)
-		if !ok || !strings.HasPrefix(key, prefixStr) || key < seekStr {
+		if !strings.HasPrefix(key, prefixStr) || key < seekStr {
 			continue
 		}
 
-		version, expiresAt, val, _ := store.DecodeEnvelope(raw)
+		version, expiresAt, val, _ := store.DecodeEnvelope(item.Value())
 		if store.IsExpired(expiresAt) {
 			continue
 		}
@@ -287,15 +303,77 @@ func (t*cacheStore) Compact(discardRatio float64) error {
 }
 
 func (t*cacheStore) Backup(w io.Writer, since uint64) (uint64, error) {
-	return 0, t.cache.Save(w)
+	for _, item := range t.cache.Items() {
+		raw := item.Value()
+		if _, expiresAt, _, _ := store.DecodeEnvelope(raw); store.IsExpired(expiresAt) {
+			continue
+		}
+		if err := writeBinary(w, []byte(item.Key())); err != nil {
+			return 0, err
+		}
+		if err := writeBinary(w, raw); err != nil {
+			return 0, err
+		}
+	}
+	return 0, nil
 }
 
 func (t*cacheStore) Restore(src io.Reader) error {
-	return t.cache.Load(src)
+
+	if err := t.DropAll(); err != nil {
+		return err
+	}
+
+	br := bufio.NewReader(src)
+
+	readBinary := func() ([]byte, error) {
+		size, err := binary.ReadUvarint(br)
+		if err != nil {
+			return nil, err
+		}
+		buf := make([]byte, size)
+		if _, err := io.ReadFull(br, buf); err != nil {
+			return nil, err
+		}
+		return buf, nil
+	}
+
+	for {
+		key, err := readBinary()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		val, err := readBinary()
+		if err != nil {
+			return err
+		}
+		_, expiresAt, _, _ := store.DecodeEnvelope(val)
+		if store.IsExpired(expiresAt) {
+			continue
+		}
+		t.cache.Set(string(key), val, cacheTtlFromExpiry(expiresAt))
+	}
+
+	return nil
+}
+
+// cacheTtlFromExpiry converts an absolute envelope expiry to a ttlcache duration.
+func cacheTtlFromExpiry(expiresAtUnix int64) time.Duration {
+	if expiresAtUnix == 0 {
+		return ttlcache.NoTTL
+	}
+	remaining := expiresAtUnix - time.Now().Unix()
+	if remaining < 1 {
+		remaining = 1
+	}
+	return time.Duration(remaining) * time.Second
 }
 
 func (t*cacheStore) DropAll() error {
-	t.cache.Flush()
+	t.cache.DeleteAll()
 	return nil
 }
 
@@ -303,18 +381,25 @@ func (t*cacheStore) DropWithPrefix(prefix []byte) error {
 
 	prefixStr := string(prefix)
 
-	for key := range t.cache.Items() {
-
-		if strings.HasPrefix(key, prefixStr){
+	for _, key := range t.cache.Keys() {
+		if strings.HasPrefix(key, prefixStr) {
 			t.cache.Delete(key)
 		}
-
 	}
 
 	return nil
-
 }
 
 func (t*cacheStore) Instance() interface{} {
 	return t.cache
+}
+
+func writeBinary(w io.Writer, b []byte) error {
+	var lenBuf [binary.MaxVarintLen64]byte
+	n := binary.PutUvarint(lenBuf[:], uint64(len(b)))
+	if _, err := w.Write(lenBuf[:n]); err != nil {
+		return err
+	}
+	_, err := w.Write(b)
+	return err
 }

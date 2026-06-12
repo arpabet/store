@@ -6,28 +6,31 @@
 package memstore
 
 import (
-	"github.com/patrickmn/go-cache"
+	"github.com/jellydator/ttlcache/v3"
 	"reflect"
-	"time"
 )
 
-func OpenDatabase(options ...Option) *cache.Cache {
+func OpenDatabase(options ...Option) *ttlcache.Cache[string, []byte] {
 
 	conf := &Config{
-		DefaultExpiration: cache.NoExpiration,
-		CleanupInterval:  time.Hour,
+		DefaultExpiration: ttlcache.NoTTL,
 	}
 
 	for _, opt := range options {
 		opt.apply(conf)
 	}
 
-	return cache.New(conf.DefaultExpiration, conf.CleanupInterval)
+	opts := []ttlcache.Option[string, []byte]{
+		// store semantics: reading a key must not extend its TTL
+		ttlcache.WithDisableTouchOnHit[string, []byte](),
+	}
+	if conf.DefaultExpiration > 0 {
+		opts = append(opts, ttlcache.WithTTL[string, []byte](conf.DefaultExpiration))
+	}
+
+	return ttlcache.New[string, []byte](opts...)
 }
 
 func ObjectType() reflect.Type {
 	return CacheStoreClass
 }
-
-
-

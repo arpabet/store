@@ -16,7 +16,9 @@ var (
 
 type Config struct {
 	DefaultExpiration time.Duration
-	CleanupInterval   time.Duration
+	// Deprecated: ttlcache schedules expiry against the nearest item deadline,
+	// so an explicit cleanup interval is no longer used. Kept for API compatibility.
+	CleanupInterval time.Duration
 }
 
 // Option configures memory storage using the functional options paradigm

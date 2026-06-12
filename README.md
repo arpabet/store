@@ -36,7 +36,7 @@ providers/badger | BadgerDB v4 | Y | Y | Y | Y | Y | Y (native) | User / PII dat
 providers/pebble | PebbleDB v2 | Y | Y | Y | Y | N | via crypto | App data
 providers/bbolt  | etcd bbolt  | Y | Y | Y | Y | N | via crypto | Config
 providers/bolt   | boltdb (legacy) | Y | Y | Y | Y | N | via crypto | Config (legacy)
-providers/mem    | go-cache    | N | Y | Y | Y | N | via crypto | Hot data
+providers/mem    | ttlcache v3 | N | Y | Y | Y | N | via crypto | Hot data
 
 TTL, versioning and compare-and-set on the non-Badger engines are provided by a
 shared value envelope (`version | expiresAt | value`) with lazy expiry; watch on
