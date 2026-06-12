@@ -59,3 +59,12 @@ base, _ := bboltstore.New("config", "config.db", 0666)
 enc, _  := cryptostore.New(base.Interface(), key) // values now encrypted at rest
 s       := otelstore.New(enc)                      // + tracing
 ```
+
+## Releasing
+
+All modules are versioned together with `release.sh`. See [RELEASING.md](RELEASING.md).
+
+```bash
+./release.sh --dry-run v1.3.0   # preview
+./release.sh v1.3.0             # tag + push every module
+```
