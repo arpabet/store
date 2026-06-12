@@ -54,6 +54,22 @@ shared value envelope (`version | expiresAt | value`) with lazy expiry; watch on
 those engines is served by an in-process fan-out hub. Badger uses its native
 TTL, MVCC versions, transactions and `Subscribe`.
 
+## Typed access (generics)
+
+A codec-driven typed layer sits on top of the raw byte API (pure sugar, no
+provider requirements). Built-in `Codec[T]`: `store.JSON[T]()`, `store.MsgPack[T]()`,
+and `store.Proto[*pb.T]()`.
+
+```go
+users := store.Of[*pb.User](ds, store.Proto[*pb.User]())
+users.Put(ctx, []byte("u:1"), &pb.User{Name: "Ann"}, store.NoTTL)
+u, found, err := users.Get(ctx, []byte("u:1"))
+
+// or as free functions
+err = store.Put(ctx, ds, []byte("c:1"), cfg, store.JSON[Config](), store.NoTTL)
+cfg, found, err := store.Get(ctx, ds, []byte("c:1"), store.JSON[Config]())
+```
+
 ## Middleware
 
 Middleware are decorators that wrap any `store.ManagedDataStore` and are
