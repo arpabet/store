@@ -44,4 +44,7 @@ var (
 	// ErrInternal
 	ErrInternal = errors.New("internal error")
 
+	// ErrNotSupported is returned when an operation is not supported by the backend capabilities.
+	ErrNotSupported = errors.New("operation not supported by this store")
+
 )

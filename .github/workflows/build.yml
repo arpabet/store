@@ -18,6 +18,7 @@ jobs:
       matrix:
         include:
           - { module: ., testflags: "-race -cover" }                 # interface (go.arpabet.com/store)
+          - { module: storetest, testflags: "-race -cover" }         # conformance suite
           - { module: providers/badger, testflags: "-race -cover" }
           - { module: providers/bbolt, testflags: "-race -cover" }
           # boltdb/bolt (archived) does unsafe pointer arithmetic that
@@ -25,6 +26,8 @@ jobs:
           - { module: providers/bolt, testflags: "-cover" }
           - { module: providers/mem, testflags: "-race -cover" }
           - { module: providers/pebble, testflags: "-race -cover" }
+          - { module: middleware/crypto, testflags: "-race -cover" }
+          - { module: middleware/otel, testflags: "-race -cover" }
     steps:
       - name: Checkout
         uses: actions/checkout@v4

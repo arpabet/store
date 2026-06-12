@@ -14,6 +14,7 @@ import (
 	"go.arpabet.com/store"
 	"io"
 	"reflect"
+	"sync"
 	"time"
 )
 
@@ -22,6 +23,12 @@ var PebbleStoreClass = reflect.TypeOf((*implPebbleStore)(nil))
 type implPebbleStore struct {
 	name  string
 	db     *pebble.DB
+	hub    *store.WatchHub
+
+	// pebble has no multi-op transaction in its basic API, so read-modify-write
+	// operations (CAS, increment, touch, versioned set) are serialized here to
+	// make them atomic within the process.
+	mu sync.Mutex
 }
 
 func New(name string, dataDir string, opts *pebble.Options) (*implPebbleStore, error) {
@@ -31,11 +38,11 @@ func New(name string, dataDir string, opts *pebble.Options) (*implPebbleStore, e
 		return nil, err
 	}
 
-	return &implPebbleStore{name: name, db: db}, nil
+	return &implPebbleStore{name: name, db: db, hub: store.NewWatchHub()}, nil
 }
 
 func FromDB(name string, db *pebble.DB) *implPebbleStore {
-	return &implPebbleStore{name: name, db: db}
+	return &implPebbleStore{name: name, db: db, hub: store.NewWatchHub()}
 }
 
 func (t*implPebbleStore) Interface() store.ManagedDataStore {
@@ -78,84 +85,164 @@ func (t*implPebbleStore) Enumerate(ctx context.Context) *store.EnumerateOperatio
 	return &store.EnumerateOperation{DataStore: t, Context: ctx}
 }
 
+func (t*implPebbleStore) Features() store.Capability {
+	return store.TTLCapability | store.AtomicCapability | store.OrderedCapability | store.WatchCapability
+}
+
+func (t*implPebbleStore) Watch(ctx context.Context) *store.WatchOperation {
+	return &store.WatchOperation{DataStore: t, Context: ctx}
+}
+
+func (t*implPebbleStore) WatchRaw(ctx context.Context, prefix []byte, cb func(*store.WatchEvent) bool) error {
+	return t.hub.Watch(ctx, prefix, cb)
+}
+
 func (t*implPebbleStore) GetRaw(ctx context.Context, key []byte, ttlPtr *int, versionPtr *int64, required bool) ([]byte, error) {
-	return t.getImpl(key, required)
-}
 
-func (t*implPebbleStore) SetRaw(ctx context.Context, key, value []byte, ttlSeconds int) error {
-	return t.db.Set(key, value, WriteOptions)
-}
-
-func (t *implPebbleStore) IncrementRaw(ctx context.Context, key []byte, initial, delta int64, ttlSeconds int) (prev int64, err error) {
-	err = t.UpdateRaw(ctx, key, func(entry *store.RawEntry) bool {
-		counter := initial
-		if len(entry.Value) >= 8 {
-			counter = int64(binary.BigEndian.Uint64(entry.Value))
-		}
-		prev = counter
-		counter += delta
-		entry.Value = make([]byte, 8)
-		binary.BigEndian.PutUint64(entry.Value, uint64(counter))
-		entry.Ttl = ttlSeconds
-		return true
-	})
-	return
-}
-
-func (t *implPebbleStore) UpdateRaw(ctx context.Context, key []byte, cb func(entry *store.RawEntry) bool) error {
-
-	rawEntry := &store.RawEntry {
-		Key: key,
-		Ttl: store.NoTTL,
-		Version: 0,
-	}
-
-	value, closer, err := t.db.Get(key)
+	version, expiresAt, value, found, err := t.readEnvelope(key)
 	if err != nil {
-		if err != pebble.ErrNotFound {
-			return err
-		}
-	} else {
-		defer closer.Close()
-	}
-
-	rawEntry.Value = value
-
-	if !cb(rawEntry) {
-		return ErrOperationCanceled
-	}
-
-	return t.db.Set(key, rawEntry.Value, WriteOptions)
-}
-
-func (t*implPebbleStore) CompareAndSetRaw(ctx context.Context, key, value []byte, ttlSeconds int, version int64) (bool, error) {
-	return true, t.SetRaw(ctx, key, value, ttlSeconds)
-}
-
-func (t *implPebbleStore) TouchRaw(ctx context.Context, fullKey []byte, ttlSeconds int) error {
-	return nil
-}
-
-func (t*implPebbleStore) RemoveRaw(ctx context.Context, key []byte) error {
-	return t.db.Delete(key, WriteOptions)
-}
-
-func (t*implPebbleStore) getImpl(key []byte, required bool) ([]byte, error) {
-
-	value, closer, err := t.db.Get(key)
-	if err != nil {
-		if err == pebble.ErrNotFound {
-			if required {
-				return nil, store.ErrNotFound
-			}
-			return nil, nil
-		}
 		return nil, err
 	}
 
-	dst := make([]byte, len(value))
-	copy(dst, value)
-	return dst, closer.Close()
+	if !found {
+		if required {
+			return nil, store.ErrNotFound
+		}
+		return nil, nil
+	}
+
+	if ttlPtr != nil {
+		*ttlPtr = store.TtlFromExpiry(expiresAt)
+	}
+	if versionPtr != nil {
+		*versionPtr = version
+	}
+
+	return value, nil
+}
+
+// readEnvelope fetches and decodes the stored envelope for key, treating expired
+// entries as absent. The returned value is copied out of pebble-managed memory.
+func (t*implPebbleStore) readEnvelope(key []byte) (version, expiresAt int64, value []byte, found bool, err error) {
+	raw, closer, gerr := t.db.Get(key)
+	if gerr != nil {
+		if gerr == pebble.ErrNotFound {
+			return 0, 0, nil, false, nil
+		}
+		return 0, 0, nil, false, gerr
+	}
+	v, exp, val, _ := store.DecodeEnvelope(raw)
+	if store.IsExpired(exp) {
+		return 0, 0, nil, false, closer.Close()
+	}
+	out := make([]byte, len(val))
+	copy(out, val)
+	return v, exp, out, true, closer.Close()
+}
+
+func (t*implPebbleStore) SetRaw(ctx context.Context, key, value []byte, ttlSeconds int) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	oldVersion, _, _, _, err := t.readEnvelope(key)
+	if err != nil {
+		return err
+	}
+	newVersion := oldVersion + 1
+	enc := store.EncodeEnvelope(newVersion, store.ExpiryFromTtl(ttlSeconds), value)
+	if err := t.db.Set(key, enc, WriteOptions); err != nil {
+		return err
+	}
+	t.notify(key, value, store.WatchSet, newVersion)
+	return nil
+}
+
+func (t *implPebbleStore) IncrementRaw(ctx context.Context, key []byte, initial, delta int64, ttlSeconds int) (prev int64, err error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	oldVersion, _, val, _, err := t.readEnvelope(key)
+	if err != nil {
+		return 0, err
+	}
+	counter := initial
+	if len(val) >= 8 {
+		counter = int64(binary.BigEndian.Uint64(val))
+	}
+	prev = counter
+	counter += delta
+
+	buf := make([]byte, 8)
+	binary.BigEndian.PutUint64(buf, uint64(counter))
+	newVersion := oldVersion + 1
+	enc := store.EncodeEnvelope(newVersion, store.ExpiryFromTtl(ttlSeconds), buf)
+	if err = t.db.Set(key, enc, WriteOptions); err != nil {
+		return prev, err
+	}
+	t.notify(key, buf, store.WatchSet, newVersion)
+	return prev, nil
+}
+
+func (t*implPebbleStore) CompareAndSetRaw(ctx context.Context, key, value []byte, ttlSeconds int, version int64) (bool, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	oldVersion, _, _, found, err := t.readEnvelope(key)
+	if err != nil {
+		return false, err
+	}
+	if found {
+		if oldVersion != version {
+			return false, nil
+		}
+	} else if version != 0 { // for non-existent record the expected version is 0
+		return false, nil
+	}
+
+	newVersion := oldVersion + 1
+	enc := store.EncodeEnvelope(newVersion, store.ExpiryFromTtl(ttlSeconds), value)
+	if err := t.db.Set(key, enc, WriteOptions); err != nil {
+		return false, err
+	}
+	t.notify(key, value, store.WatchSet, newVersion)
+	return true, nil
+}
+
+func (t *implPebbleStore) TouchRaw(ctx context.Context, key []byte, ttlSeconds int) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	oldVersion, _, val, found, err := t.readEnvelope(key)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return nil
+	}
+	enc := store.EncodeEnvelope(oldVersion, store.ExpiryFromTtl(ttlSeconds), val)
+	return t.db.Set(key, enc, WriteOptions)
+}
+
+func (t*implPebbleStore) RemoveRaw(ctx context.Context, key []byte) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if err := t.db.Delete(key, WriteOptions); err != nil {
+		return err
+	}
+	t.notify(key, nil, store.WatchDelete, 0)
+	return nil
+}
+
+func (t*implPebbleStore) notify(key, value []byte, eventType store.WatchEventType, version int64) {
+	k := make([]byte, len(key))
+	copy(k, key)
+	var val []byte
+	if value != nil {
+		val = make([]byte, len(value))
+		copy(val, value)
+	}
+	t.hub.Notify(&store.WatchEvent{Key: k, Value: val, Type: eventType, Version: version})
 }
 
 func (t*implPebbleStore) EnumerateRaw(ctx context.Context, prefix, seek []byte, batchSize int, onlyKeys bool, reverse bool, cb func(entry *store.RawEntry) bool) error {
@@ -201,20 +288,23 @@ func (t*implPebbleStore) doEnumerateRaw(ctx context.Context, prefix, seek []byte
 			break
 		}
 
+		version, expiresAt, val, _ := store.DecodeEnvelope(iter.Value())
+		if store.IsExpired(expiresAt) {
+			continue
+		}
+
 		key := make([]byte, len(iter.Key()))
 		copy(key, iter.Key())
 
-		var value []byte
-		if !onlyKeys {
-			value = make([]byte, len(iter.Value()))
-			copy(value, iter.Value())
-		}
-
 		re := store.RawEntry{
 			Key:     key,
-			Value:   value,
-			Ttl:     0,
-			Version: 0,
+			Ttl:     store.TtlFromExpiry(expiresAt),
+			Version: version,
+		}
+
+		if !onlyKeys {
+			re.Value = make([]byte, len(val))
+			copy(re.Value, val)
 		}
 
 		if !cb(&re) {

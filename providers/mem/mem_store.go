@@ -14,6 +14,7 @@ import (
 	"github.com/patrickmn/go-cache"
 	"reflect"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -22,6 +23,11 @@ var CacheStoreClass = reflect.TypeOf((*cacheStore)(nil))
 type cacheStore struct {
 	name      string
 	cache     *cache.Cache
+	hub       *store.WatchHub
+
+	// go-cache locks each operation, but read-modify-write (CAS, increment,
+	// touch, versioned set) must be serialized across operations.
+	mu sync.Mutex
 }
 
 func NewDefault(name string) *cacheStore {
@@ -30,11 +36,11 @@ func NewDefault(name string) *cacheStore {
 
 func New(name string, options ...Option) *cacheStore {
 	cache := OpenDatabase(options...)
-	return &cacheStore{name: name, cache: cache}
+	return &cacheStore{name: name, cache: cache, hub: store.NewWatchHub()}
 }
 
 func FromCache(name string, c *cache.Cache) *cacheStore {
-	return &cacheStore{name: name, cache: c}
+	return &cacheStore{name: name, cache: c, hub: store.NewWatchHub()}
 }
 
 func (t*cacheStore) Interface() store.ManagedDataStore {
@@ -47,6 +53,11 @@ func (t*cacheStore) BeanName() string {
 
 func (t*cacheStore) Destroy() error {
 	return nil
+}
+
+func (t*cacheStore) Features() store.Capability {
+	// go-cache stores items in an unordered map, so no OrderedCapability.
+	return store.TTLCapability | store.AtomicCapability | store.WatchCapability
 }
 
 func (t*cacheStore) Get(ctx context.Context) *store.GetOperation {
@@ -77,106 +88,141 @@ func (t*cacheStore) Enumerate(ctx context.Context) *store.EnumerateOperation {
 	return &store.EnumerateOperation{DataStore: t, Context: ctx}
 }
 
+func (t*cacheStore) Watch(ctx context.Context) *store.WatchOperation {
+	return &store.WatchOperation{DataStore: t, Context: ctx}
+}
+
+func (t*cacheStore) WatchRaw(ctx context.Context, prefix []byte, cb func(*store.WatchEvent) bool) error {
+	return t.hub.Watch(ctx, prefix, cb)
+}
+
+func cacheTtl(ttlSeconds int) time.Duration {
+	if ttlSeconds > 0 {
+		return time.Second * time.Duration(ttlSeconds)
+	}
+	return cache.NoExpiration
+}
+
+// read decodes the envelope stored for key, treating expired entries as absent.
+func (t*cacheStore) read(key string) (version, expiresAt int64, value []byte, found bool) {
+	obj, ok := t.cache.Get(key)
+	if !ok || obj == nil {
+		return 0, 0, nil, false
+	}
+	raw, ok := obj.([]byte)
+	if !ok {
+		return 0, 0, nil, false
+	}
+	v, exp, val, _ := store.DecodeEnvelope(raw)
+	if store.IsExpired(exp) {
+		return 0, 0, nil, false
+	}
+	out := make([]byte, len(val))
+	copy(out, val)
+	return v, exp, out, true
+}
+
 func (t*cacheStore) GetRaw(ctx context.Context, key []byte, ttlPtr *int, versionPtr *int64, required bool) ([]byte, error) {
-	return t.getImpl(key, required)
+
+	version, expiresAt, val, found := t.read(string(key))
+	if !found {
+		if required {
+			return nil, os.ErrNotExist
+		}
+		return nil, nil
+	}
+
+	if ttlPtr != nil {
+		*ttlPtr = store.TtlFromExpiry(expiresAt)
+	}
+	if versionPtr != nil {
+		*versionPtr = version
+	}
+
+	return val, nil
 }
 
 func (t*cacheStore) SetRaw(ctx context.Context, key, value []byte, ttlSeconds int) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 
-	ttl := cache.NoExpiration
-	if ttlSeconds > 0 {
-		ttl = time.Second * time.Duration(ttlSeconds)
-	}
-
-	t.cache.Set(string(key), value, ttl)
+	oldVersion, _, _, _ := t.read(string(key))
+	newVersion := oldVersion + 1
+	enc := store.EncodeEnvelope(newVersion, store.ExpiryFromTtl(ttlSeconds), value)
+	t.cache.Set(string(key), enc, cacheTtl(ttlSeconds))
+	t.notify(key, value, store.WatchSet, newVersion)
 	return nil
 }
 
 func (t *cacheStore) IncrementRaw(ctx context.Context, key []byte, initial, delta int64, ttlSeconds int) (prev int64, err error) {
-	err = t.UpdateRaw(ctx, key, func(entry *store.RawEntry) bool {
-		counter := initial
-		if len(entry.Value) >= 8 {
-			counter = int64(binary.BigEndian.Uint64(entry.Value))
-		}
-		prev = counter
-		counter += delta
-		entry.Value = make([]byte, 8)
-		binary.BigEndian.PutUint64(entry.Value, uint64(counter))
-		entry.Ttl = ttlSeconds
-		return true
-	})
-	return
-}
+	t.mu.Lock()
+	defer t.mu.Unlock()
 
-func (t *cacheStore) UpdateRaw(ctx context.Context, key []byte, cb func(entry *store.RawEntry) bool) error {
-
-	rawEntry := &store.RawEntry {
-		Key: key,
-		Ttl: store.NoTTL,
-		Version: 0,
+	oldVersion, _, val, _ := t.read(string(key))
+	counter := initial
+	if len(val) >= 8 {
+		counter = int64(binary.BigEndian.Uint64(val))
 	}
+	prev = counter
+	counter += delta
 
-	if obj, ok := t.cache.Get(string(key)); ok && obj != nil {
-		if b, ok := obj.([]byte); ok {
-			rawEntry.Value = b
-		}
-	}
-
-	if !cb(rawEntry) {
-		return ErrCanceled
-	}
-
-	ttl := cache.NoExpiration
-	if rawEntry.Ttl > 0 {
-		ttl = time.Second * time.Duration(rawEntry.Ttl)
-	}
-
-	t.cache.Set(string(key), rawEntry.Value, ttl)
-	return nil
+	buf := make([]byte, 8)
+	binary.BigEndian.PutUint64(buf, uint64(counter))
+	newVersion := oldVersion + 1
+	enc := store.EncodeEnvelope(newVersion, store.ExpiryFromTtl(ttlSeconds), buf)
+	t.cache.Set(string(key), enc, cacheTtl(ttlSeconds))
+	t.notify(key, buf, store.WatchSet, newVersion)
+	return prev, nil
 }
 
 func (t*cacheStore) CompareAndSetRaw(ctx context.Context, key, value []byte, ttlSeconds int, version int64) (bool, error) {
-	return true, t.SetRaw(ctx, key, value, ttlSeconds)
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	oldVersion, _, _, found := t.read(string(key))
+	if found {
+		if oldVersion != version {
+			return false, nil
+		}
+	} else if version != 0 { // for non-existent record the expected version is 0
+		return false, nil
+	}
+
+	newVersion := oldVersion + 1
+	enc := store.EncodeEnvelope(newVersion, store.ExpiryFromTtl(ttlSeconds), value)
+	t.cache.Set(string(key), enc, cacheTtl(ttlSeconds))
+	t.notify(key, value, store.WatchSet, newVersion)
+	return true, nil
 }
 
 func (t *cacheStore) TouchRaw(ctx context.Context, key []byte, ttlSeconds int) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 
-	var value []byte
-
-	if obj, ok := t.cache.Get(string(key)); ok && obj != nil {
-		if b, ok := obj.([]byte); ok {
-			value = b
-		}
+	oldVersion, _, val, found := t.read(string(key))
+	if !found {
+		return nil
 	}
-
-	ttl := cache.NoExpiration
-	if ttlSeconds > 0 {
-		ttl = time.Second * time.Duration(ttlSeconds)
-	}
-
-	t.cache.Set(string(key),value, ttl)
+	enc := store.EncodeEnvelope(oldVersion, store.ExpiryFromTtl(ttlSeconds), val)
+	t.cache.Set(string(key), enc, cacheTtl(ttlSeconds))
 	return nil
 }
 
 func (t*cacheStore) RemoveRaw(ctx context.Context, key []byte) error {
 	t.cache.Delete(string(key))
+	t.notify(key, nil, store.WatchDelete, 0)
 	return nil
 }
 
-func (t*cacheStore) getImpl(key []byte, required bool) ([]byte, error) {
-
+func (t*cacheStore) notify(key, value []byte, eventType store.WatchEventType, version int64) {
+	k := make([]byte, len(key))
+	copy(k, key)
 	var val []byte
-	if obj, ok := t.cache.Get(string(key)); ok && obj != nil {
-		if b, ok := obj.([]byte); ok {
-			val = b
-		}
+	if value != nil {
+		val = make([]byte, len(value))
+		copy(val, value)
 	}
-
-	if val == nil && required {
-		return nil, os.ErrNotExist
-	}
-
-	return val, nil
+	t.hub.Notify(&store.WatchEvent{Key: k, Value: val, Type: eventType, Version: version})
 }
 
 func (t*cacheStore) EnumerateRaw(ctx context.Context, prefix, seek []byte, batchSize int, onlyKeys bool, reverse bool, cb func(entry *store.RawEntry) bool) error {
@@ -208,20 +254,28 @@ func (t*cacheStore) doEnumerateRaw(prefix, seek []byte, batchSize int, onlyKeys 
 
 	for key, item := range t.cache.Items() {
 
-		if val, ok := item.Object.([]byte); ok && strings.HasPrefix(key, prefixStr) && key >= seekStr {
-			re := store.RawEntry{
-				Key:     []byte(key),
-				Ttl:     int(item.Expiration),
-				Version: item.Expiration,
-			}
-			if !onlyKeys {
-				re.Value = val
-			}
-			if !cb(&re) {
-				break
-			}
+		raw, ok := item.Object.([]byte)
+		if !ok || !strings.HasPrefix(key, prefixStr) || key < seekStr {
+			continue
 		}
 
+		version, expiresAt, val, _ := store.DecodeEnvelope(raw)
+		if store.IsExpired(expiresAt) {
+			continue
+		}
+
+		re := store.RawEntry{
+			Key:     []byte(key),
+			Ttl:     store.TtlFromExpiry(expiresAt),
+			Version: version,
+		}
+		if !onlyKeys {
+			re.Value = make([]byte, len(val))
+			copy(re.Value, val)
+		}
+		if !cb(&re) {
+			break
+		}
 	}
 
 	return nil
@@ -249,7 +303,7 @@ func (t*cacheStore) DropWithPrefix(prefix []byte) error {
 
 	prefixStr := string(prefix)
 
-	for key, _ := range t.cache.Items() {
+	for key := range t.cache.Items() {
 
 		if strings.HasPrefix(key, prefixStr){
 			t.cache.Delete(key)

@@ -85,6 +85,13 @@ type DataStore interface {
 	glue.NamedBean
 
 	/**
+	Reports the set of capabilities this store actually guarantees.
+	Used to decide interchangeability and to gate the conformance suite.
+	*/
+
+	Features() Capability
+
+	/**
 	Sugar code for GetOperation object creation
 	 */
 
@@ -126,6 +133,12 @@ type DataStore interface {
 	*/
 
 	Enumerate(ctx context.Context) *EnumerateOperation
+
+	/**
+	Sugar code for WatchOperation object creation
+	*/
+
+	Watch(ctx context.Context) *WatchOperation
 
 	/**
 	Internal GetRaw method
@@ -175,6 +188,14 @@ type DataStore interface {
 	*/
 
 	EnumerateRaw(ctx context.Context, prefix, seek []byte, batchSize int, onlyKeys bool, reverse bool, cb func(*RawEntry) bool)  error
+
+	/**
+	Internal WatchRaw method
+	Blocks delivering change events for keys matching prefix to cb until cb returns false or ctx is done.
+	A nil/empty prefix watches all keys. Stores without WatchCapability return ErrNotSupported.
+	*/
+
+	WatchRaw(ctx context.Context, prefix []byte, cb func(*WatchEvent) bool) error
 
 }
 

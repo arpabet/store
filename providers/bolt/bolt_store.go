@@ -22,6 +22,7 @@ var BoltStoreClass = reflect.TypeOf((*implBoltStore)(nil))
 type implBoltStore struct {
 	name   string
 	db     *bolt.DB
+	hub    *store.WatchHub
 
 	dataFile string
 	dataFilePerm os.FileMode
@@ -42,6 +43,7 @@ func New(name string, dataFile string, dataFilePerm os.FileMode, options... Opti
 	return &implBoltStore{
 		name: name,
 		db: db,
+		hub: store.NewWatchHub(),
 		dataFile: dataFile,
 		dataFilePerm: dataFilePerm,
 		options: options,
@@ -49,7 +51,7 @@ func New(name string, dataFile string, dataFilePerm os.FileMode, options... Opti
 }
 
 func FromDB(name string, db *bolt.DB) *implBoltStore {
-	return &implBoltStore{name: name, db: db}
+	return &implBoltStore{name: name, db: db, hub: store.NewWatchHub()}
 }
 
 func (t *implBoltStore) Interface() store.ManagedDataStore {
@@ -62,6 +64,10 @@ func (t*implBoltStore) BeanName() string {
 
 func (t*implBoltStore) Destroy() error {
 	return t.db.Close()
+}
+
+func (t*implBoltStore) Features() store.Capability {
+	return store.TTLCapability | store.AtomicCapability | store.OrderedCapability | store.WatchCapability
 }
 
 func (t*implBoltStore) Get(ctx context.Context) *store.GetOperation {
@@ -92,8 +98,49 @@ func (t*implBoltStore) Enumerate(ctx context.Context) *store.EnumerateOperation 
 	return &store.EnumerateOperation{DataStore: t, Context: ctx}
 }
 
-func (t*implBoltStore) GetRaw(ctx context.Context, key []byte, ttlPtr *int, versionPtr *int64, required bool) ([]byte, error) {
-	return t.getImpl(key, required)
+func (t*implBoltStore) Watch(ctx context.Context) *store.WatchOperation {
+	return &store.WatchOperation{DataStore: t, Context: ctx}
+}
+
+func (t*implBoltStore) WatchRaw(ctx context.Context, prefix []byte, cb func(*store.WatchEvent) bool) error {
+	return t.hub.Watch(ctx, prefix, cb)
+}
+
+func (t*implBoltStore) GetRaw(ctx context.Context, fullKey []byte, ttlPtr *int, versionPtr *int64, required bool) ([]byte, error) {
+
+	var version, expiresAt int64
+	var val []byte
+	var found bool
+
+	bucket, key := t.parseKey(fullKey)
+	err := t.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucket)
+		if b == nil {
+			return nil
+		}
+		version, expiresAt, val, found = readEnvelope(b, key)
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	if !found {
+		if required {
+			return nil, os.ErrNotExist
+		}
+		return nil, nil
+	}
+
+	if ttlPtr != nil {
+		*ttlPtr = store.TtlFromExpiry(expiresAt)
+	}
+	if versionPtr != nil {
+		*versionPtr = version
+	}
+
+	return val, nil
 }
 
 func (t*implBoltStore) parseKey(fullKey []byte) ([]byte, []byte) {
@@ -105,6 +152,22 @@ func (t*implBoltStore) parseKey(fullKey []byte) ([]byte, []byte) {
 	}
 }
 
+// readEnvelope decodes the stored value for key, treating expired entries as
+// absent. The returned value is copied out of the bolt-managed memory.
+func readEnvelope(b *bolt.Bucket, key []byte) (version, expiresAt int64, value []byte, found bool) {
+	raw := b.Get(key)
+	if raw == nil {
+		return 0, 0, nil, false
+	}
+	v, exp, val, _ := store.DecodeEnvelope(raw)
+	if store.IsExpired(exp) {
+		return 0, 0, nil, false
+	}
+	out := make([]byte, len(val))
+	copy(out, val)
+	return v, exp, out, true
+}
+
 func (t*implBoltStore) SetRaw(ctx context.Context, fullKey, value []byte, ttlSeconds int) error {
 
 	if t.db.IsReadOnly() {
@@ -112,36 +175,106 @@ func (t*implBoltStore) SetRaw(ctx context.Context, fullKey, value []byte, ttlSec
 	}
 
 	bucket, key := t.parseKey(fullKey)
-	return t.db.Update(func(tx *bolt.Tx) error {
+	var newVersion int64
+	err := t.db.Update(func(tx *bolt.Tx) error {
 
 		b, err := tx.CreateBucketIfNotExists(bucket)
 		if err != nil {
 			return err
 		}
 
-		return b.Put(key, value)
-
+		oldVersion, _, _, _ := readEnvelope(b, key)
+		newVersion = oldVersion + 1
+		enc := store.EncodeEnvelope(newVersion, store.ExpiryFromTtl(ttlSeconds), value)
+		return b.Put(key, enc)
 	})
 
+	if err == nil {
+		t.notify(fullKey, value, store.WatchSet, newVersion)
+	}
+	return err
 }
 
-func (t *implBoltStore) IncrementRaw(ctx context.Context, key []byte, initial, delta int64, ttlSeconds int) (prev int64, err error) {
-	err = t.UpdateRaw(ctx, key, func(entry *store.RawEntry) bool {
-		counter := initial
-		if len(entry.Value) >= 8 {
-			counter = int64(binary.BigEndian.Uint64(entry.Value))
+func (t *implBoltStore) IncrementRaw(ctx context.Context, fullKey []byte, initial, delta int64, ttlSeconds int) (prev int64, err error) {
+
+	if t.db.IsReadOnly() {
+		return 0, ErrDatabaseReadOnly
+	}
+
+	bucket, key := t.parseKey(fullKey)
+	var newVersion int64
+	var counter int64
+	err = t.db.Update(func(tx *bolt.Tx) error {
+
+		b, err := tx.CreateBucketIfNotExists(bucket)
+		if err != nil {
+			return err
+		}
+
+		oldVersion, _, val, _ := readEnvelope(b, key)
+		counter = initial
+		if len(val) >= 8 {
+			counter = int64(binary.BigEndian.Uint64(val))
 		}
 		prev = counter
 		counter += delta
-		entry.Value = make([]byte, 8)
-		binary.BigEndian.PutUint64(entry.Value, uint64(counter))
-		entry.Ttl = ttlSeconds
-		return true
+
+		buf := make([]byte, 8)
+		binary.BigEndian.PutUint64(buf, uint64(counter))
+		newVersion = oldVersion + 1
+		enc := store.EncodeEnvelope(newVersion, store.ExpiryFromTtl(ttlSeconds), buf)
+		return b.Put(key, enc)
 	})
+
+	if err == nil {
+		buf := make([]byte, 8)
+		binary.BigEndian.PutUint64(buf, uint64(counter))
+		t.notify(fullKey, buf, store.WatchSet, newVersion)
+	}
 	return
 }
 
-func (t *implBoltStore) UpdateRaw(ctx context.Context, fullKey []byte, cb func(entry *store.RawEntry) bool) error {
+func (t*implBoltStore) CompareAndSetRaw(ctx context.Context, fullKey, value []byte, ttlSeconds int, version int64) (bool, error) {
+
+	if t.db.IsReadOnly() {
+		return false, ErrDatabaseReadOnly
+	}
+
+	bucket, key := t.parseKey(fullKey)
+	var updated bool
+	var newVersion int64
+	err := t.db.Update(func(tx *bolt.Tx) error {
+
+		b, err := tx.CreateBucketIfNotExists(bucket)
+		if err != nil {
+			return err
+		}
+
+		oldVersion, _, _, found := readEnvelope(b, key)
+		if found {
+			if oldVersion != version {
+				return nil
+			}
+		} else if version != 0 { // for non-existent record the expected version is 0
+			return nil
+		}
+
+		newVersion = oldVersion + 1
+		enc := store.EncodeEnvelope(newVersion, store.ExpiryFromTtl(ttlSeconds), value)
+		if err := b.Put(key, enc); err != nil {
+			return err
+		}
+		updated = true
+		return nil
+	})
+
+	if err == nil && updated {
+		t.notify(fullKey, value, store.WatchSet, newVersion)
+	}
+	return updated, err
+}
+
+func (t *implBoltStore) TouchRaw(ctx context.Context, fullKey []byte, ttlSeconds int) error {
 
 	if t.db.IsReadOnly() {
 		return ErrDatabaseReadOnly
@@ -150,32 +283,19 @@ func (t *implBoltStore) UpdateRaw(ctx context.Context, fullKey []byte, cb func(e
 	bucket, key := t.parseKey(fullKey)
 	return t.db.Update(func(tx *bolt.Tx) error {
 
-		b, err := tx.CreateBucketIfNotExists(bucket)
-		if err != nil {
-			return err
+		b := tx.Bucket(bucket)
+		if b == nil {
+			return nil
 		}
 
-		re := store.RawEntry{
-			Key:     key,
-			Value:   b.Get(key),
-			Ttl:     0,
-			Version: 0,
+		oldVersion, _, val, found := readEnvelope(b, key)
+		if !found {
+			return nil
 		}
 
-		if !cb(&re) {
-			return ErrCanceled
-		}
-
-		return b.Put(key, re.Value)
+		enc := store.EncodeEnvelope(oldVersion, store.ExpiryFromTtl(ttlSeconds), val)
+		return b.Put(key, enc)
 	})
-}
-
-func (t*implBoltStore) CompareAndSetRaw(ctx context.Context, key, value []byte, ttlSeconds int, version int64) (bool, error) {
-	return true, t.SetRaw(ctx, key, value, ttlSeconds)
-}
-
-func (t *implBoltStore) TouchRaw(ctx context.Context, fullKey []byte, ttlSeconds int) error {
-	return nil
 }
 
 func (t*implBoltStore) RemoveRaw(ctx context.Context, fullKey []byte) error {
@@ -185,7 +305,7 @@ func (t*implBoltStore) RemoveRaw(ctx context.Context, fullKey []byte) error {
 	}
 
 	bucket, key := t.parseKey(fullKey)
-	return t.db.Update(func(tx *bolt.Tx) error {
+	err := t.db.Update(func(tx *bolt.Tx) error {
 
 		b, err := tx.CreateBucketIfNotExists(bucket)
 		if err != nil {
@@ -195,33 +315,21 @@ func (t*implBoltStore) RemoveRaw(ctx context.Context, fullKey []byte) error {
 		return b.Delete(key)
 	})
 
+	if err == nil {
+		t.notify(fullKey, nil, store.WatchDelete, 0)
+	}
+	return err
 }
 
-func (t*implBoltStore) getImpl(fullKey []byte, required bool) ([]byte, error) {
-
+func (t*implBoltStore) notify(fullKey, value []byte, eventType store.WatchEventType, version int64) {
+	key := make([]byte, len(fullKey))
+	copy(key, fullKey)
 	var val []byte
-
-	bucket, key := t.parseKey(fullKey)
-	err := t.db.View(func(tx *bolt.Tx) error {
-
-		b := tx.Bucket(bucket)
-		if b == nil {
-			return nil
-		}
-
-		val = b.Get(key)
-		return nil
-	})
-
-	if err != nil {
-		return nil, err
+	if value != nil {
+		val = make([]byte, len(value))
+		copy(val, value)
 	}
-
-	if val == nil && required {
-		return nil, os.ErrNotExist
-	}
-
-	return val, nil
+	t.hub.Notify(&store.WatchEvent{Key: key, Value: val, Type: eventType, Version: version})
 }
 
 func (t*implBoltStore) EnumerateRaw(ctx context.Context, prefix, seek []byte, batchSize int, onlyKeys bool, reverse bool, cb func(entry *store.RawEntry) bool) error {
@@ -290,20 +398,26 @@ func (t *implBoltStore) enumerateInBucket(bucketWithSeparator []byte, b *bolt.Bu
 
 	for ; k != nil; k, v = cur.Next() {
 
-		key := append(bucketWithSeparator, k...)
+		key := newAppend(bucketWithSeparator, k...)
 
 		if !bytes.HasPrefix(key, prefix) {
 			break
 		}
 
+		version, expiresAt, val, _ := store.DecodeEnvelope(v)
+		if store.IsExpired(expiresAt) {
+			continue
+		}
+
 		re := store.RawEntry{
 			Key:     key,
-			Ttl:     0,
-			Version: 0,
+			Ttl:     store.TtlFromExpiry(expiresAt),
+			Version: version,
 		}
 
 		if !onlyKeys {
-			re.Value = v
+			re.Value = make([]byte, len(val))
+			copy(re.Value, val)
 		}
 
 		if !cb(&re) {
@@ -429,7 +543,7 @@ func (t*implBoltStore) DropWithPrefix(prefix []byte) error {
 		if b == nil {
 			return nil
 		}
-		
+
 		return b.ForEach(func(k, v []byte) error {
 			return b.Delete(k)
 		})

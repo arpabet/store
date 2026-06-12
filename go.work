@@ -2,9 +2,12 @@ go 1.25.0
 
 use (
 	.
+	./storetest
 	./providers/badger
 	./providers/bbolt
 	./providers/bolt
 	./providers/mem
 	./providers/pebble
+	./middleware/crypto
+	./middleware/otel
 )
