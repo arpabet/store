@@ -14,6 +14,7 @@ import (
 	"github.com/jellydator/ttlcache/v3"
 	"os"
 	"reflect"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -77,8 +78,8 @@ func (t*cacheStore) Destroy() error {
 }
 
 func (t*cacheStore) Features() store.Capability {
-	// ttlcache stores items in an unordered map, so no OrderedCapability.
-	return store.TTLCapability | store.AtomicCapability | store.WatchCapability
+	// enumeration sorts keys, so order / range / pagination are supported.
+	return store.TTLCapability | store.AtomicCapability | store.WatchCapability | store.OrderedCapability
 }
 
 func (t*cacheStore) Get(ctx context.Context) *store.GetOperation {
@@ -269,7 +270,17 @@ func (t*cacheStore) doEnumerateRaw(prefix, seek []byte, batchSize int, onlyKeys 
 	prefixStr := string(prefix)
 	seekStr := string(seek)
 
-	for key, item := range t.cache.Items() {
+	// ttlcache.Items() is an unordered map; sort keys so enumeration is ordered
+	// (enables Seek/Range/pagination semantics and OrderedCapability).
+	items := t.cache.Items()
+	keys := make([]string, 0, len(items))
+	for key := range items {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	for _, key := range keys {
+		item := items[key]
 
 		if !strings.HasPrefix(key, prefixStr) || key < seekStr {
 			continue

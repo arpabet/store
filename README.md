@@ -36,12 +36,18 @@ providers/badger | BadgerDB v4 | Y | Y | Y | Y | Y | N | Y (native) | User / PII
 providers/pebble | PebbleDB v2 | Y | Y | Y | Y | N | Y | via crypto | App data
 providers/bbolt  | etcd bbolt  | Y | Y | Y | Y | N | Y | via crypto | Config
 providers/bolt   | boltdb (legacy) | Y | Y | Y | Y | N | Y | via crypto | Config (legacy)
-providers/mem    | ttlcache v3 | N | Y | Y | Y | N | N | via crypto | Hot data
+providers/mem    | ttlcache v3 | Y | Y | Y | Y | N | N | via crypto | Hot data
 
 Batch writes (`s.Batch(ctx).Put(...).Do()` / `SetBatchRaw`) are available on every
 store; `BatchAtomic` marks the ones where a batch is all-or-nothing (single
 transaction). Badger uses `WriteBatch` (chunked, not atomic) and mem applies under
 a lock (not isolated from readers), so neither advertises `BatchAtomic`.
+
+Range scans and pagination need ordering: `Enumerate(ctx).Range(from, to)` over the
+half-open `[from, to)` interval, and `.After(token).Limit(n).DoPage(...)` which
+returns an opaque continuation token (the last key) for the next page. These
+return `ErrNotSupported` on a store without `Ordered`; mem sorts on enumerate so it
+qualifies.
 
 TTL, versioning and compare-and-set on the non-Badger engines are provided by a
 shared value envelope (`version | expiresAt | value`) with lazy expiry; watch on

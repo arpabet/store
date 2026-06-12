@@ -73,6 +73,8 @@ func RunConformance(t *testing.T, newStore Factory) {
 	}
 	if caps.Has(store.OrderedCapability) {
 		t.Run("Ordered", func(t *testing.T) { testOrdered(t, newStore) })
+		t.Run("Range", func(t *testing.T) { testRange(t, newStore) })
+		t.Run("Pagination", func(t *testing.T) { testPagination(t, newStore) })
 	}
 	if caps.Has(store.WatchCapability) {
 		t.Run("Watch", func(t *testing.T) { testWatch(t, newStore) })
@@ -359,6 +361,70 @@ func testTouch(t *testing.T, newStore Factory) {
 	_, err := s.Get(ctx).ByKey("%s", key("touch")).WithTtl(&ttl).ToString()
 	require.NoError(t, err)
 	require.True(t, ttl > 0 && ttl <= 100, "touch should set ttl, got %d", ttl)
+}
+
+func testRange(t *testing.T, newStore Factory) {
+	s := newStore(t)
+	ctx := context.Background()
+
+	for _, name := range []string{"a", "b", "c", "d", "e"} {
+		require.NoError(t, s.Set(ctx).ByRawKey([]byte(key(name))).String(name))
+	}
+
+	// [b, d) -> b, c (d exclusive)
+	var got []string
+	err := s.Enumerate(ctx).Range([]byte(key("b")), []byte(key("d"))).Do(func(e *store.RawEntry) bool {
+		got = append(got, string(e.Key))
+		return true
+	})
+	require.NoError(t, err)
+	require.Equal(t, []string{key("b"), key("c")}, got)
+
+	// open upper bound [d, nil) -> d, e
+	got = nil
+	err = s.Enumerate(ctx).Range([]byte(key("d")), nil).Do(func(e *store.RawEntry) bool {
+		got = append(got, string(e.Key))
+		return true
+	})
+	require.NoError(t, err)
+	require.Equal(t, []string{key("d"), key("e")}, got)
+}
+
+func testPagination(t *testing.T, newStore Factory) {
+	s := newStore(t)
+	ctx := context.Background()
+
+	const n = 5
+	for i := 0; i < n; i++ {
+		require.NoError(t, s.Set(ctx).ByRawKey([]byte(key(fmt.Sprintf("p%d", i)))).String(fmt.Sprintf("v%d", i)))
+	}
+
+	var all []string
+	var token []byte
+	pages := 0
+	for {
+		var page []string
+		next, err := s.Enumerate(ctx).ByPrefix("%s", key("p")).After(token).Limit(2).DoPage(func(e *store.RawEntry) bool {
+			page = append(page, string(e.Key))
+			return true
+		})
+		require.NoError(t, err)
+		all = append(all, page...)
+		pages++
+		require.LessOrEqual(t, len(page), 2, "page must not exceed the limit")
+		if next == nil {
+			break
+		}
+		token = next
+		require.Less(t, pages, 10, "pagination did not terminate")
+	}
+
+	want := make([]string, n)
+	for i := 0; i < n; i++ {
+		want[i] = key(fmt.Sprintf("p%d", i))
+	}
+	require.Equal(t, want, all)
+	require.GreaterOrEqual(t, pages, 3, "5 items at page size 2 should take at least 3 pages")
 }
 
 func testOrdered(t *testing.T, newStore Factory) {
