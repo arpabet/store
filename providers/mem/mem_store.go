@@ -16,7 +16,6 @@ import (
 	"reflect"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -28,8 +27,9 @@ type cacheStore struct {
 	hub       *store.WatchHub
 
 	// ttlcache locks each operation, but read-modify-write (CAS, increment,
-	// touch, versioned set) must be serialized across operations.
-	mu sync.Mutex
+	// touch, versioned set) must be serialized per key across operations.
+	// Striped by key hash so writers to different keys proceed in parallel.
+	locks store.StripedMutex
 }
 
 func NewDefault(name string) *cacheStore {
@@ -161,21 +161,19 @@ func (t*cacheStore) GetRaw(ctx context.Context, key []byte, ttlPtr *int, version
 }
 
 func (t*cacheStore) SetRaw(ctx context.Context, key, value []byte, ttlSeconds int) error {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
+	t.locks.Lock(key)
 	oldVersion, _, _, _ := t.read(string(key))
 	newVersion := oldVersion + 1
 	enc := store.EncodeEnvelope(newVersion, store.ExpiryFromTtl(ttlSeconds), value)
 	t.cache.Set(string(key), enc, cacheTtl(ttlSeconds))
+	t.locks.Unlock(key)
+
 	t.notify(key, value, store.WatchSet, newVersion)
 	return nil
 }
 
 func (t *cacheStore) IncrementRaw(ctx context.Context, key []byte, initial, delta int64, ttlSeconds int) (prev int64, err error) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
+	t.locks.Lock(key)
 	oldVersion, _, val, _ := t.read(string(key))
 	counter := initial
 	if len(val) >= 8 {
@@ -189,33 +187,37 @@ func (t *cacheStore) IncrementRaw(ctx context.Context, key []byte, initial, delt
 	newVersion := oldVersion + 1
 	enc := store.EncodeEnvelope(newVersion, store.ExpiryFromTtl(ttlSeconds), buf)
 	t.cache.Set(string(key), enc, cacheTtl(ttlSeconds))
+	t.locks.Unlock(key)
+
 	t.notify(key, buf, store.WatchSet, newVersion)
 	return prev, nil
 }
 
 func (t*cacheStore) CompareAndSetRaw(ctx context.Context, key, value []byte, ttlSeconds int, version int64) (bool, error) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
+	t.locks.Lock(key)
 	oldVersion, _, _, found := t.read(string(key))
 	if found {
 		if oldVersion != version {
+			t.locks.Unlock(key)
 			return false, nil
 		}
 	} else if version != 0 { // for non-existent record the expected version is 0
+		t.locks.Unlock(key)
 		return false, nil
 	}
 
 	newVersion := oldVersion + 1
 	enc := store.EncodeEnvelope(newVersion, store.ExpiryFromTtl(ttlSeconds), value)
 	t.cache.Set(string(key), enc, cacheTtl(ttlSeconds))
+	t.locks.Unlock(key)
+
 	t.notify(key, value, store.WatchSet, newVersion)
 	return true, nil
 }
 
 func (t *cacheStore) TouchRaw(ctx context.Context, key []byte, ttlSeconds int) error {
-	t.mu.Lock()
-	defer t.mu.Unlock()
+	t.locks.Lock(key)
+	defer t.locks.Unlock(key)
 
 	oldVersion, _, val, found := t.read(string(key))
 	if !found {

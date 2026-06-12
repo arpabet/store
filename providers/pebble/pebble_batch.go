@@ -20,8 +20,12 @@ func (t *implPebbleStore) SetBatchRaw(ctx context.Context, entries []store.RawEn
 		return nil
 	}
 
-	t.mu.Lock()
-	defer t.mu.Unlock()
+	keys := make([][]byte, len(entries))
+	for i := range entries {
+		keys[i] = entries[i].Key
+	}
+	unlock := t.locks.LockMany(keys...)
+	defer unlock()
 
 	batch := t.db.NewBatch()
 	defer batch.Close()

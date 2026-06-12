@@ -19,7 +19,7 @@ import (
 func TestConformance(t *testing.T) {
 	storetest.RunConformance(t, func(t *testing.T) store.ManagedDataStore {
 		file := filepath.Join(t.TempDir(), "conf.db")
-		s, err := boltstore.New("conf", file, os.FileMode(0666))
+		s, err := boltstore.New("conf", file, os.FileMode(0600))
 		require.NoError(t, err)
 		t.Cleanup(func() { s.Destroy() })
 		return s.Interface()

@@ -14,7 +14,6 @@ import (
 	"go.arpabet.com/store"
 	"io"
 	"reflect"
-	"sync"
 	"time"
 )
 
@@ -27,8 +26,9 @@ type implPebbleStore struct {
 
 	// pebble has no multi-op transaction in its basic API, so read-modify-write
 	// operations (CAS, increment, touch, versioned set) are serialized here to
-	// make them atomic within the process.
-	mu sync.Mutex
+	// make them atomic within the process. Striped by key hash so writers to
+	// different keys proceed in parallel.
+	locks store.StripedMutex
 }
 
 func New(name string, dataDir string, opts *pebble.Options) (*implPebbleStore, error) {
@@ -142,28 +142,29 @@ func (t*implPebbleStore) readEnvelope(key []byte) (version, expiresAt int64, val
 }
 
 func (t*implPebbleStore) SetRaw(ctx context.Context, key, value []byte, ttlSeconds int) error {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
+	t.locks.Lock(key)
 	oldVersion, _, _, _, err := t.readEnvelope(key)
 	if err != nil {
+		t.locks.Unlock(key)
 		return err
 	}
 	newVersion := oldVersion + 1
 	enc := store.EncodeEnvelope(newVersion, store.ExpiryFromTtl(ttlSeconds), value)
 	if err := t.db.Set(key, enc, WriteOptions); err != nil {
+		t.locks.Unlock(key)
 		return err
 	}
+	t.locks.Unlock(key)
+
 	t.notify(key, value, store.WatchSet, newVersion)
 	return nil
 }
 
 func (t *implPebbleStore) IncrementRaw(ctx context.Context, key []byte, initial, delta int64, ttlSeconds int) (prev int64, err error) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
+	t.locks.Lock(key)
 	oldVersion, _, val, _, err := t.readEnvelope(key)
 	if err != nil {
+		t.locks.Unlock(key)
 		return 0, err
 	}
 	counter := initial
@@ -178,40 +179,47 @@ func (t *implPebbleStore) IncrementRaw(ctx context.Context, key []byte, initial,
 	newVersion := oldVersion + 1
 	enc := store.EncodeEnvelope(newVersion, store.ExpiryFromTtl(ttlSeconds), buf)
 	if err = t.db.Set(key, enc, WriteOptions); err != nil {
+		t.locks.Unlock(key)
 		return prev, err
 	}
+	t.locks.Unlock(key)
+
 	t.notify(key, buf, store.WatchSet, newVersion)
 	return prev, nil
 }
 
 func (t*implPebbleStore) CompareAndSetRaw(ctx context.Context, key, value []byte, ttlSeconds int, version int64) (bool, error) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
+	t.locks.Lock(key)
 	oldVersion, _, _, found, err := t.readEnvelope(key)
 	if err != nil {
+		t.locks.Unlock(key)
 		return false, err
 	}
 	if found {
 		if oldVersion != version {
+			t.locks.Unlock(key)
 			return false, nil
 		}
 	} else if version != 0 { // for non-existent record the expected version is 0
+		t.locks.Unlock(key)
 		return false, nil
 	}
 
 	newVersion := oldVersion + 1
 	enc := store.EncodeEnvelope(newVersion, store.ExpiryFromTtl(ttlSeconds), value)
 	if err := t.db.Set(key, enc, WriteOptions); err != nil {
+		t.locks.Unlock(key)
 		return false, err
 	}
+	t.locks.Unlock(key)
+
 	t.notify(key, value, store.WatchSet, newVersion)
 	return true, nil
 }
 
 func (t *implPebbleStore) TouchRaw(ctx context.Context, key []byte, ttlSeconds int) error {
-	t.mu.Lock()
-	defer t.mu.Unlock()
+	t.locks.Lock(key)
+	defer t.locks.Unlock(key)
 
 	oldVersion, _, val, found, err := t.readEnvelope(key)
 	if err != nil {
@@ -225,12 +233,13 @@ func (t *implPebbleStore) TouchRaw(ctx context.Context, key []byte, ttlSeconds i
 }
 
 func (t*implPebbleStore) RemoveRaw(ctx context.Context, key []byte) error {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
+	t.locks.Lock(key)
 	if err := t.db.Delete(key, WriteOptions); err != nil {
+		t.locks.Unlock(key)
 		return err
 	}
+	t.locks.Unlock(key)
+
 	t.notify(key, nil, store.WatchDelete, 0)
 	return nil
 }

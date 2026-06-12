@@ -23,7 +23,7 @@ func TestPrimitives(t *testing.T) {
 	}
 	defer os.Remove(file.Name())
 
-	s, err := boltstore.New("test", file.Name(), os.FileMode(0666))
+	s, err := boltstore.New("test", file.Name(), os.FileMode(0600))
 	require.NoError(t, err)
 
 	defer s.Destroy()

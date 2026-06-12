@@ -107,7 +107,7 @@ themselves stores, so they compose and remain interchangeable:
   Prometheus users scrape via the OTel Prometheus bridge.
 
 ```go
-base, _ := bboltstore.New("config", "config.db", 0666)
+base, _ := bboltstore.New("config", "config.db", 0600)
 enc, _  := cryptostore.New(base.Interface(), key) // values now encrypted at rest
 s       := otelstore.New(enc)                      // + tracing
 

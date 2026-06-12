@@ -30,7 +30,11 @@ func (t *cacheStore) SetBatchRaw(ctx context.Context, entries []store.RawEntry) 
 	}
 	notices := make([]notice, 0, len(entries))
 
-	t.mu.Lock()
+	keys := make([][]byte, len(entries))
+	for i := range entries {
+		keys[i] = entries[i].Key
+	}
+	unlock := t.locks.LockMany(keys...)
 	for i := range entries {
 		e := &entries[i]
 		oldVersion, _, _, _ := t.read(string(e.Key))
@@ -39,7 +43,7 @@ func (t *cacheStore) SetBatchRaw(ctx context.Context, entries []store.RawEntry) 
 		t.cache.Set(string(e.Key), enc, cacheTtl(e.Ttl))
 		notices = append(notices, notice{key: e.Key, value: e.Value, version: newVersion})
 	}
-	t.mu.Unlock()
+	unlock()
 
 	for _, n := range notices {
 		t.notify(n.key, n.value, store.WatchSet, n.version)

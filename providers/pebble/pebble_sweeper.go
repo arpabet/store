@@ -44,28 +44,28 @@ func (t *implPebbleStore) SweepExpired(ctx context.Context) (int, error) {
 			return removed, err
 		}
 
-		t.mu.Lock()
+		t.locks.Lock(k)
 		raw, closer, gerr := t.db.Get(k)
 		if gerr == pebble.ErrNotFound {
-			t.mu.Unlock()
+			t.locks.Unlock(k)
 			continue
 		}
 		if gerr != nil {
-			t.mu.Unlock()
+			t.locks.Unlock(k)
 			return removed, gerr
 		}
 		_, expiresAt, _, _ := store.DecodeEnvelope(raw)
 		closer.Close()
 		if !store.IsExpired(expiresAt) { // rewritten with a fresh TTL meanwhile
-			t.mu.Unlock()
+			t.locks.Unlock(k)
 			continue
 		}
 		if derr := t.db.Delete(k, WriteOptions); derr != nil {
-			t.mu.Unlock()
+			t.locks.Unlock(k)
 			return removed, derr
 		}
 		removed++
-		t.mu.Unlock()
+		t.locks.Unlock(k)
 
 		t.notify(k, nil, store.WatchDelete, 0)
 	}

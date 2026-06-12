@@ -14,7 +14,6 @@ import (
 	"go.arpabet.com/store"
 	"io"
 	"reflect"
-	"sync"
 	"time"
 )
 
@@ -26,8 +25,9 @@ type implRosedbStore struct {
 	hub  *store.WatchHub
 
 	// rosedb ops are individually safe, but read-modify-write (versioned set,
-	// CAS, increment, touch) must be serialized across operations.
-	mu sync.Mutex
+	// CAS, increment, touch) must be serialized per key across operations.
+	// Striped by key hash so writers to different keys proceed in parallel.
+	locks store.StripedMutex
 }
 
 func New(name string, dataDir string, options ...Option) (*implRosedbStore, error) {
@@ -160,52 +160,57 @@ func (t *implRosedbStore) GetRaw(ctx context.Context, key []byte, ttlPtr *int, v
 }
 
 func (t *implRosedbStore) SetRaw(ctx context.Context, key, value []byte, ttlSeconds int) error {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
+	t.locks.Lock(key)
 	oldVersion, _, _, _, err := t.readEnvelope(key)
 	if err != nil {
+		t.locks.Unlock(key)
 		return err
 	}
 	newVersion := oldVersion + 1
 	enc := store.EncodeEnvelope(newVersion, store.ExpiryFromTtl(ttlSeconds), value)
 	if err := t.put(key, enc, ttlSeconds); err != nil {
+		t.locks.Unlock(key)
 		return err
 	}
+	t.locks.Unlock(key)
+
 	t.notify(key, value, store.WatchSet, newVersion)
 	return nil
 }
 
 func (t *implRosedbStore) CompareAndSetRaw(ctx context.Context, key, value []byte, ttlSeconds int, version int64) (bool, error) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
+	t.locks.Lock(key)
 	oldVersion, _, _, found, err := t.readEnvelope(key)
 	if err != nil {
+		t.locks.Unlock(key)
 		return false, err
 	}
 	if found {
 		if oldVersion != version {
+			t.locks.Unlock(key)
 			return false, nil
 		}
 	} else if version != 0 {
+		t.locks.Unlock(key)
 		return false, nil
 	}
 	newVersion := oldVersion + 1
 	enc := store.EncodeEnvelope(newVersion, store.ExpiryFromTtl(ttlSeconds), value)
 	if err := t.put(key, enc, ttlSeconds); err != nil {
+		t.locks.Unlock(key)
 		return false, err
 	}
+	t.locks.Unlock(key)
+
 	t.notify(key, value, store.WatchSet, newVersion)
 	return true, nil
 }
 
 func (t *implRosedbStore) IncrementRaw(ctx context.Context, key []byte, initial, delta int64, ttlSeconds int) (prev int64, err error) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
+	t.locks.Lock(key)
 	oldVersion, _, val, _, err := t.readEnvelope(key)
 	if err != nil {
+		t.locks.Unlock(key)
 		return 0, err
 	}
 	counter := initial
@@ -220,15 +225,18 @@ func (t *implRosedbStore) IncrementRaw(ctx context.Context, key []byte, initial,
 	newVersion := oldVersion + 1
 	enc := store.EncodeEnvelope(newVersion, store.ExpiryFromTtl(ttlSeconds), buf)
 	if err = t.put(key, enc, ttlSeconds); err != nil {
+		t.locks.Unlock(key)
 		return prev, err
 	}
+	t.locks.Unlock(key)
+
 	t.notify(key, buf, store.WatchSet, newVersion)
 	return prev, nil
 }
 
 func (t *implRosedbStore) TouchRaw(ctx context.Context, key []byte, ttlSeconds int) error {
-	t.mu.Lock()
-	defer t.mu.Unlock()
+	t.locks.Lock(key)
+	defer t.locks.Unlock(key)
 
 	oldVersion, _, val, found, err := t.readEnvelope(key)
 	if err != nil {
@@ -242,11 +250,13 @@ func (t *implRosedbStore) TouchRaw(ctx context.Context, key []byte, ttlSeconds i
 }
 
 func (t *implRosedbStore) RemoveRaw(ctx context.Context, key []byte) error {
-	t.mu.Lock()
-	defer t.mu.Unlock()
+	t.locks.Lock(key)
 	if err := t.db.Delete(key); err != nil {
+		t.locks.Unlock(key)
 		return err
 	}
+	t.locks.Unlock(key)
+
 	t.notify(key, nil, store.WatchDelete, 0)
 	return nil
 }
@@ -255,8 +265,12 @@ func (t *implRosedbStore) SetBatchRaw(ctx context.Context, entries []store.RawEn
 	if len(entries) == 0 {
 		return nil
 	}
-	t.mu.Lock()
-	defer t.mu.Unlock()
+
+	keys := make([][]byte, len(entries))
+	for i := range entries {
+		keys[i] = entries[i].Key
+	}
+	unlock := t.locks.LockMany(keys...)
 
 	type notice struct {
 		key, value []byte
@@ -277,6 +291,7 @@ func (t *implRosedbStore) SetBatchRaw(ctx context.Context, entries []store.RawEn
 			base = v
 		} else if gerr != rosedb.ErrKeyNotFound {
 			_ = batch.Rollback()
+			unlock()
 			return gerr
 		}
 		newVersion := base + 1
@@ -289,6 +304,7 @@ func (t *implRosedbStore) SetBatchRaw(ctx context.Context, entries []store.RawEn
 		}
 		if perr != nil {
 			_ = batch.Rollback()
+			unlock()
 			return perr
 		}
 		notices = append(notices, notice{key: e.Key, value: e.Value, version: newVersion})
@@ -296,11 +312,14 @@ func (t *implRosedbStore) SetBatchRaw(ctx context.Context, entries []store.RawEn
 
 	if err := ctx.Err(); err != nil {
 		_ = batch.Rollback()
+		unlock()
 		return err
 	}
 	if err := batch.Commit(); err != nil {
+		unlock()
 		return err
 	}
+	unlock()
 
 	for _, n := range notices {
 		t.notify(n.key, n.value, store.WatchSet, n.version)
@@ -414,24 +433,19 @@ func (t *implRosedbStore) Restore(r io.Reader) error {
 }
 
 func (t *implRosedbStore) DropAll() error {
-	t.mu.Lock()
-	defer t.mu.Unlock()
+	unlock := t.locks.LockAll()
+	defer unlock()
 	var keys [][]byte
 	t.db.Ascend(func(k, v []byte) (bool, error) {
 		keys = append(keys, cloneBytes(k))
 		return true, nil
 	})
-	for _, k := range keys {
-		if err := t.db.Delete(k); err != nil {
-			return err
-		}
-	}
-	return nil
+	return t.deleteKeysBatch(keys)
 }
 
 func (t *implRosedbStore) DropWithPrefix(prefix []byte) error {
-	t.mu.Lock()
-	defer t.mu.Unlock()
+	unlock := t.locks.LockAll()
+	defer unlock()
 	var keys [][]byte
 	t.db.AscendGreaterOrEqual(prefix, func(k, v []byte) (bool, error) {
 		if !bytes.HasPrefix(k, prefix) {
@@ -440,12 +454,24 @@ func (t *implRosedbStore) DropWithPrefix(prefix []byte) error {
 		keys = append(keys, cloneBytes(k))
 		return true, nil
 	})
+	return t.deleteKeysBatch(keys)
+}
+
+// deleteKeysBatch removes the given keys in a single atomic rosedb batch. Keys
+// must be collected before the batch is opened (NewBatch holds db.mu, so
+// iterating during an open batch would deadlock).
+func (t *implRosedbStore) deleteKeysBatch(keys [][]byte) error {
+	if len(keys) == 0 {
+		return nil
+	}
+	batch := t.db.NewBatch(rosedb.DefaultBatchOptions)
 	for _, k := range keys {
-		if err := t.db.Delete(k); err != nil {
+		if err := batch.Delete(k); err != nil {
+			_ = batch.Rollback()
 			return err
 		}
 	}
-	return nil
+	return batch.Commit()
 }
 
 func (t *implRosedbStore) Instance() interface{} {
