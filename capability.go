@@ -38,6 +38,11 @@ const (
 
 	// WatchCapability means WatchRaw delivers change notifications.
 	WatchCapability
+
+	// BatchAtomicCapability means SetBatchRaw is all-or-nothing (a failed batch
+	// leaves no partial writes). Without it, SetBatchRaw is still correct but a
+	// failure mid-way may leave some entries written.
+	BatchAtomicCapability
 )
 
 var capabilityNames = []struct {
@@ -50,6 +55,7 @@ var capabilityNames = []struct {
 	{EncryptedCapability, "Encrypted"},
 	{OrderedCapability, "Ordered"},
 	{WatchCapability, "Watch"},
+	{BatchAtomicCapability, "BatchAtomic"},
 }
 
 // Has reports whether all the bits in other are set in c.

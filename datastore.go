@@ -104,6 +104,12 @@ type DataStore interface {
 	Set(ctx context.Context) *SetOperation
 
 	/**
+	Sugar code for BatchOperation object creation
+	*/
+
+	Batch(ctx context.Context) *BatchOperation
+
+	/**
 	Sugar code for IncrementOperation object creation
 	*/
 
@@ -153,6 +159,14 @@ type DataStore interface {
 	*/
 
 	SetRaw(ctx context.Context, key, value []byte, ttlSeconds int) error
+
+	/**
+	Internal SetBatchRaw method
+	Writes multiple entries (Key, Value, Ttl of each RawEntry) in one operation.
+	Atomic (all-or-nothing) only on stores reporting BatchAtomicCapability.
+	*/
+
+	SetBatchRaw(ctx context.Context, entries []RawEntry) error
 
 	/**
 	Internal CompareAndSetRaw method

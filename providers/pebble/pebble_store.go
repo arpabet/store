@@ -86,7 +86,8 @@ func (t*implPebbleStore) Enumerate(ctx context.Context) *store.EnumerateOperatio
 }
 
 func (t*implPebbleStore) Features() store.Capability {
-	return store.TTLCapability | store.AtomicCapability | store.OrderedCapability | store.WatchCapability
+	return store.TTLCapability | store.AtomicCapability | store.OrderedCapability |
+		store.WatchCapability | store.BatchAtomicCapability
 }
 
 func (t*implPebbleStore) Watch(ctx context.Context) *store.WatchOperation {

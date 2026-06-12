@@ -23,6 +23,7 @@ package storetest
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"testing"
 	"time"
@@ -53,7 +54,11 @@ func RunConformance(t *testing.T, newStore Factory) {
 	t.Run("NotFound", func(t *testing.T) { testNotFound(t, newStore) })
 	t.Run("Increment", func(t *testing.T) { testIncrement(t, newStore) })
 	t.Run("Enumerate", func(t *testing.T) { testEnumerate(t, newStore) })
+	t.Run("Batch", func(t *testing.T) { testBatch(t, newStore) })
 
+	if caps.Has(store.BatchAtomicCapability) {
+		t.Run("BatchAtomic", func(t *testing.T) { testBatchAtomic(t, newStore) })
+	}
 	if caps.Has(store.AtomicCapability) {
 		t.Run("CompareAndSet", func(t *testing.T) { testCompareAndSet(t, newStore) })
 		t.Run("Version", func(t *testing.T) { testVersion(t, newStore) })
@@ -153,6 +158,57 @@ func testEnumerate(t *testing.T, newStore Factory) {
 	})
 	require.NoError(t, err)
 	require.Equal(t, 3, count)
+}
+
+func testBatch(t *testing.T, newStore Factory) {
+	s := newStore(t)
+	ctx := context.Background()
+
+	// empty batch is a no-op
+	require.NoError(t, s.Batch(ctx).Do())
+
+	b := s.Batch(ctx)
+	for i := 0; i < 5; i++ {
+		b.Put([]byte(key(fmt.Sprintf("b%d", i))), []byte(fmt.Sprintf("v%d", i)), store.NoTTL)
+	}
+	require.NoError(t, b.Do())
+
+	for i := 0; i < 5; i++ {
+		v, err := s.Get(ctx).ByRawKey([]byte(key(fmt.Sprintf("b%d", i)))).ToString()
+		require.NoError(t, err)
+		require.Equal(t, fmt.Sprintf("v%d", i), v)
+	}
+
+	// duplicate key within one batch: last value wins
+	require.NoError(t, s.Batch(ctx).
+		Put([]byte(key("dup")), []byte("first"), store.NoTTL).
+		Put([]byte(key("dup")), []byte("second"), store.NoTTL).
+		Do())
+	v, err := s.Get(ctx).ByRawKey([]byte(key("dup"))).ToString()
+	require.NoError(t, err)
+	require.Equal(t, "second", v)
+}
+
+// testBatchAtomic verifies all-or-nothing: a batch that fails (here via a
+// cancelled context before commit) leaves none of its entries written.
+func testBatchAtomic(t *testing.T, newStore Factory) {
+	s := newStore(t)
+
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := s.Batch(cancelled).
+		Put([]byte(key("atom1")), []byte("x"), store.NoTTL).
+		Put([]byte(key("atom2")), []byte("y"), store.NoTTL).
+		Do()
+	require.Error(t, err, "cancelled batch must fail")
+
+	ctx := context.Background()
+	for _, k := range []string{"atom1", "atom2"} {
+		v, err := s.Get(ctx).ByRawKey([]byte(key(k))).ToString()
+		require.NoError(t, err)
+		require.Equal(t, "", v, "no entry from a failed atomic batch should be written")
+	}
 }
 
 func testCompareAndSet(t *testing.T, newStore Factory) {

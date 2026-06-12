@@ -170,6 +170,9 @@ func (t *compressStore) Get(ctx context.Context) *store.GetOperation {
 func (t *compressStore) Set(ctx context.Context) *store.SetOperation {
 	return &store.SetOperation{DataStore: t, Context: ctx}
 }
+func (t *compressStore) Batch(ctx context.Context) *store.BatchOperation {
+	return &store.BatchOperation{DataStore: t, Context: ctx}
+}
 func (t *compressStore) CompareAndSet(ctx context.Context) *store.CompareAndSetOperation {
 	return &store.CompareAndSetOperation{DataStore: t, Context: ctx}
 }
@@ -201,6 +204,14 @@ func (t *compressStore) GetRaw(ctx context.Context, key []byte, ttlPtr *int, ver
 
 func (t *compressStore) SetRaw(ctx context.Context, key, value []byte, ttlSeconds int) error {
 	return t.delegate.SetRaw(ctx, key, t.compress(value), ttlSeconds)
+}
+
+func (t *compressStore) SetBatchRaw(ctx context.Context, entries []store.RawEntry) error {
+	out := make([]store.RawEntry, len(entries))
+	for i := range entries {
+		out[i] = store.RawEntry{Key: entries[i].Key, Value: t.compress(entries[i].Value), Ttl: entries[i].Ttl}
+	}
+	return t.delegate.SetBatchRaw(ctx, out)
 }
 
 func (t *compressStore) CompareAndSetRaw(ctx context.Context, key, value []byte, ttlSeconds int, version int64) (bool, error) {

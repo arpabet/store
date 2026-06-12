@@ -67,7 +67,8 @@ func (t*implBoltStore) Destroy() error {
 }
 
 func (t*implBoltStore) Features() store.Capability {
-	return store.TTLCapability | store.AtomicCapability | store.OrderedCapability | store.WatchCapability
+	return store.TTLCapability | store.AtomicCapability | store.OrderedCapability |
+		store.WatchCapability | store.BatchAtomicCapability
 }
 
 func (t*implBoltStore) Get(ctx context.Context) *store.GetOperation {

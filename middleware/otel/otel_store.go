@@ -116,6 +116,9 @@ func (t *otelStore) Get(ctx context.Context) *store.GetOperation {
 func (t *otelStore) Set(ctx context.Context) *store.SetOperation {
 	return &store.SetOperation{DataStore: t, Context: ctx}
 }
+func (t *otelStore) Batch(ctx context.Context) *store.BatchOperation {
+	return &store.BatchOperation{DataStore: t, Context: ctx}
+}
 func (t *otelStore) CompareAndSet(ctx context.Context) *store.CompareAndSetOperation {
 	return &store.CompareAndSetOperation{DataStore: t, Context: ctx}
 }
@@ -150,6 +153,13 @@ func (t *otelStore) SetRaw(ctx context.Context, key, value []byte, ttlSeconds in
 		attribute.Int("store.value_size", len(value)),
 		attribute.Int("store.ttl", ttlSeconds))
 	err := t.delegate.SetRaw(ctx, key, value, ttlSeconds)
+	finish(span, err)
+	return err
+}
+
+func (t *otelStore) SetBatchRaw(ctx context.Context, entries []store.RawEntry) error {
+	ctx, span := t.start(ctx, "store.SetBatchRaw", attribute.Int("store.batch_size", len(entries)))
+	err := t.delegate.SetBatchRaw(ctx, entries)
 	finish(span, err)
 	return err
 }

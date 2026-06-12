@@ -30,13 +30,18 @@ the shared conformance suite (`storetest`) asserts a behavior for a provider onl
 if it advertises the matching capability. Providers are interchangeable for a
 given feature when both report it.
 
-Provider | Backend | Ordered | TTL | Atomic/CAS | Watch | Transactional | Encrypted | Usage
---- | --- | --- | --- | --- | --- | --- | --- | ---
-providers/badger | BadgerDB v4 | Y | Y | Y | Y | Y | Y (native) | User / PII data
-providers/pebble | PebbleDB v2 | Y | Y | Y | Y | N | via crypto | App data
-providers/bbolt  | etcd bbolt  | Y | Y | Y | Y | N | via crypto | Config
-providers/bolt   | boltdb (legacy) | Y | Y | Y | Y | N | via crypto | Config (legacy)
-providers/mem    | ttlcache v3 | N | Y | Y | Y | N | via crypto | Hot data
+Provider | Backend | Ordered | TTL | Atomic/CAS | Watch | Transactional | BatchAtomic | Encrypted | Usage
+--- | --- | --- | --- | --- | --- | --- | --- | --- | ---
+providers/badger | BadgerDB v4 | Y | Y | Y | Y | Y | N | Y (native) | User / PII data
+providers/pebble | PebbleDB v2 | Y | Y | Y | Y | N | Y | via crypto | App data
+providers/bbolt  | etcd bbolt  | Y | Y | Y | Y | N | Y | via crypto | Config
+providers/bolt   | boltdb (legacy) | Y | Y | Y | Y | N | Y | via crypto | Config (legacy)
+providers/mem    | ttlcache v3 | N | Y | Y | Y | N | N | via crypto | Hot data
+
+Batch writes (`s.Batch(ctx).Put(...).Do()` / `SetBatchRaw`) are available on every
+store; `BatchAtomic` marks the ones where a batch is all-or-nothing (single
+transaction). Badger uses `WriteBatch` (chunked, not atomic) and mem applies under
+a lock (not isolated from readers), so neither advertises `BatchAtomic`.
 
 TTL, versioning and compare-and-set on the non-Badger engines are provided by a
 shared value envelope (`version | expiresAt | value`) with lazy expiry; watch on

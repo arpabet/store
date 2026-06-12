@@ -167,6 +167,9 @@ func (t *cryptoStore) Get(ctx context.Context) *store.GetOperation {
 func (t *cryptoStore) Set(ctx context.Context) *store.SetOperation {
 	return &store.SetOperation{DataStore: t, Context: ctx}
 }
+func (t *cryptoStore) Batch(ctx context.Context) *store.BatchOperation {
+	return &store.BatchOperation{DataStore: t, Context: ctx}
+}
 func (t *cryptoStore) CompareAndSet(ctx context.Context) *store.CompareAndSetOperation {
 	return &store.CompareAndSetOperation{DataStore: t, Context: ctx}
 }
@@ -202,6 +205,18 @@ func (t *cryptoStore) SetRaw(ctx context.Context, key, value []byte, ttlSeconds 
 		return err
 	}
 	return t.delegate.SetRaw(ctx, key, enc, ttlSeconds)
+}
+
+func (t *cryptoStore) SetBatchRaw(ctx context.Context, entries []store.RawEntry) error {
+	sealed := make([]store.RawEntry, len(entries))
+	for i := range entries {
+		enc, err := t.seal(entries[i].Value)
+		if err != nil {
+			return err
+		}
+		sealed[i] = store.RawEntry{Key: entries[i].Key, Value: enc, Ttl: entries[i].Ttl}
+	}
+	return t.delegate.SetBatchRaw(ctx, sealed)
 }
 
 func (t *cryptoStore) CompareAndSetRaw(ctx context.Context, key, value []byte, ttlSeconds int, version int64) (bool, error) {
