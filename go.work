@@ -10,4 +10,5 @@ use (
 	./providers/pebble
 	./middleware/crypto
 	./middleware/otel
+	./middleware/crypto/age
 )

@@ -53,8 +53,10 @@ themselves stores, so they compose and remain interchangeable:
   "encrypted config in bbolt" or "encrypted hot data in mem" is a one-liner.
   Each value stores the id of the key that sealed it, so a `Keyring` enables
   **online key rotation**: old values keep decrypting under their old key while
-  new writes use the active key. age / AWS KMS / GCP KMS integrations are
-  separate modules implementing `Keyring`, so their SDKs aren't pulled in unless used.
+  new writes use the active key. Key sources are separate modules implementing
+  `Keyring`, so their SDKs aren't pulled in unless used —
+  [`middleware/crypto/age`](middleware/crypto/age) (age-wrapped data keys) ships
+  today; AWS KMS / GCP KMS adapters follow the same pattern.
 - **otel** — wraps every operation in an OpenTelemetry span (bean name, op, key;
   values are never recorded, safe for PII).
 
