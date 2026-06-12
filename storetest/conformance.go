@@ -44,8 +44,10 @@ func key(name string) string { return prefix + name }
 // RunConformance runs the full suite, gating each behavior on Features().
 func RunConformance(t *testing.T, newStore Factory) {
 
-	caps := newStore(t).Features()
-	t.Logf("capabilities: %s", caps)
+	probe := newStore(t)
+	caps := probe.Features()
+	_, sweepable := probe.(store.Sweepable)
+	t.Logf("capabilities: %s (sweepable=%v)", caps, sweepable)
 
 	t.Run("GetSetRemove", func(t *testing.T) { testGetSetRemove(t, newStore) })
 	t.Run("NotFound", func(t *testing.T) { testNotFound(t, newStore) })
@@ -60,6 +62,9 @@ func RunConformance(t *testing.T, newStore Factory) {
 		t.Run("TTL", func(t *testing.T) { testTTL(t, newStore) })
 		t.Run("Expiry", func(t *testing.T) { testExpiry(t, newStore) })
 		t.Run("Touch", func(t *testing.T) { testTouch(t, newStore) })
+		if sweepable {
+			t.Run("Sweep", func(t *testing.T) { testSweep(t, newStore) })
+		}
 	}
 	if caps.Has(store.OrderedCapability) {
 		t.Run("Ordered", func(t *testing.T) { testOrdered(t, newStore) })
@@ -234,6 +239,57 @@ func testExpiry(t *testing.T, newStore Factory) {
 	val, err := s.Get(ctx).ByKey("%s", key("exp")).ToString()
 	require.NoError(t, err)
 	require.Equal(t, "", val, "entry should have expired")
+}
+
+// testSweep verifies that a Sweepable store physically removes expired entries
+// (not merely hides them), leaves live entries intact, is idempotent, and emits
+// a WatchDelete during the sweep.
+func testSweep(t *testing.T, newStore Factory) {
+	s := newStore(t)
+	sw := s.(store.Sweepable)
+	ctx := context.Background()
+
+	require.NoError(t, s.Set(ctx).ByKey("%s", key("live")).String("keep"))
+	require.NoError(t, s.Set(ctx).ByKey("%s", key("gone")).WithTtl(1).String("bye"))
+	time.Sleep(1500 * time.Millisecond)
+
+	// watch for the delete the sweep is about to emit
+	events := make(chan *store.WatchEvent, 8)
+	wctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		_ = s.Watch(wctx).ByPrefix(prefix).Do(func(e *store.WatchEvent) bool {
+			events <- e
+			return true
+		})
+	}()
+	time.Sleep(150 * time.Millisecond)
+
+	removed, err := sw.SweepExpired(ctx)
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, removed, 1, "sweep should remove the expired key")
+
+	// live key survived, expired key gone
+	live, err := s.Get(ctx).ByKey("%s", key("live")).ToString()
+	require.NoError(t, err)
+	require.Equal(t, "keep", live)
+	gone, err := s.Get(ctx).ByKey("%s", key("gone")).ToString()
+	require.NoError(t, err)
+	require.Equal(t, "", gone)
+
+	// idempotent: nothing left to sweep
+	removed2, err := sw.SweepExpired(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 0, removed2)
+
+	// the sweep emitted a WatchDelete for the expired key
+	select {
+	case e := <-events:
+		require.Equal(t, store.WatchDelete, e.Type)
+		require.Equal(t, key("gone"), string(e.Key))
+	case <-time.After(3 * time.Second):
+		t.Fatal("no WatchDelete emitted during sweep")
+	}
 }
 
 func testTouch(t *testing.T, newStore Factory) {
