@@ -54,6 +54,14 @@ shared value envelope (`version | expiresAt | value`) with lazy expiry; watch on
 those engines is served by an in-process fan-out hub. Badger uses its native
 TTL, MVCC versions, transactions and `Subscribe`.
 
+**Watch semantics.** Watch is **in-process** (mutations through this process's
+handle only; a different process writing the same file is not observed) and
+**best-effort** (bounded per-watcher buffers drop events under load — treat an
+event as "re-read this key"). TTL expiry surfaces as a `WatchDelete` only when the
+entry is reclaimed: automatically on mem, and via a running sweeper
+(`store.StartSweeper`) on the disk backends. Writes made directly on the engine
+returned by `Instance()` bypass the store layer and are **not** delivered to watchers.
+
 ## Typed access (generics)
 
 A codec-driven typed layer sits on top of the raw byte API (pure sugar, no

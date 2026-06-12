@@ -16,9 +16,17 @@ WatchHub is an in-process publish/subscribe helper that backends without native
 change feeds (bbolt, bolt, pebble, mem) embed to satisfy WatchRaw. Backends call
 Notify after a committed mutation; WatchRaw delegates to Watch.
 
-Delivery is best-effort: each subscriber has a bounded buffer and events are
-dropped for a subscriber that is not keeping up, so a slow watcher never blocks
-writers. This matches the at-most-once semantics typical of embedded watches.
+Scope: in-process only — Notify is invoked by the writing goroutine inside this
+process, so events from another process writing the same file are not seen.
+
+Delivery is best-effort: each subscriber has a bounded buffer (WatchBufferSize)
+and events are dropped for a subscriber that is not keeping up, so a slow watcher
+never blocks writers. This matches the at-most-once semantics typical of embedded
+watches — treat an event as "re-read this key", not as a durable log.
+
+Expiry: TTL expirations are emitted as WatchDelete by whatever reclaims the entry
+— a running sweeper (Sweepable / StartSweeper) for the disk backends, or the
+janitor for mem. A plain GetRaw that merely hides an expired entry does not Notify.
 */
 
 // WatchBufferSize is the per-subscriber channel buffer used by WatchHub.

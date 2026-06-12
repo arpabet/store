@@ -207,6 +207,20 @@ type DataStore interface {
 	Internal WatchRaw method
 	Blocks delivering change events for keys matching prefix to cb until cb returns false or ctx is done.
 	A nil/empty prefix watches all keys. Stores without WatchCapability return ErrNotSupported.
+
+	Scope and guarantees:
+	  - In-process only. Watch observes mutations made through THIS process's store
+	    handle. Another process writing the same file is not observed (badger opens
+	    the file exclusively; the bbolt/bolt/pebble/mem hubs are in-memory).
+	  - Best-effort delivery. The hub-backed providers (bbolt, bolt, pebble, mem)
+	    use bounded per-subscriber buffers and drop events for a watcher that is not
+	    keeping up; treat Watch as a notification to re-read, not an event log.
+	  - TTL expiry: an expired key surfaces as a WatchDelete only when something
+	    reclaims it — the mem ttlcache janitor does this automatically; for the
+	    disk providers run a sweeper (see StartSweeper / Sweepable). Without it,
+	    expired keys are hidden on read but emit no WatchDelete.
+	  - Writes made directly on the engine returned by Instance() bypass Watch
+	    (and the value envelope), so they are not delivered to watchers.
 	*/
 
 	WatchRaw(ctx context.Context, prefix []byte, cb func(*WatchEvent) bool) error
@@ -219,7 +233,14 @@ type ManagedDataStore interface {
 	DataStoreManager
 
 	/**
-	Returns instance of data store object
+	Returns the underlying engine handle (e.g. *badger.DB, *bbolt.DB, *pebble.DB,
+	*ttlcache.Cache) for engine-specific operations.
+
+	Caution: reads and writes performed directly on this handle bypass the store
+	layer entirely — the value envelope (version/TTL), capability semantics, and
+	Watch notifications do not apply. Mutations made via Instance() are invisible
+	to watchers and may not be decodable by GetRaw. Use it for administration, not
+	for data the rest of the application reads back through the store.
 	*/
 
 	Instance() interface{}
