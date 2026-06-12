@@ -55,9 +55,9 @@ themselves stores, so they compose and remain interchangeable:
   **online key rotation**: old values keep decrypting under their old key while
   new writes use the active key. Key sources are separate modules implementing
   `Keyring`, so their SDKs aren't pulled in unless used:
-  [`middleware/crypto/age`](middleware/crypto/age) (age-wrapped data keys) and
-  [`middleware/crypto/kms`](middleware/crypto/kms) (AWS KMS envelope encryption);
-  a GCP KMS adapter follows the same pattern.
+  [`middleware/crypto/age`](middleware/crypto/age) (age-wrapped data keys),
+  [`middleware/crypto/kms/aws`](middleware/crypto/kms/aws) (AWS KMS) and
+  [`middleware/crypto/kms/gcp`](middleware/crypto/kms/gcp) (Google Cloud KMS).
 - **otel** — wraps every operation in an OpenTelemetry span (bean name, op, key;
   values are never recorded, safe for PII).
 

@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: BUSL-1.1
  */
 
-// Package kmskeyring implements cryptostore.Keyring backed by AWS KMS envelope
+// Package awskms implements cryptostore.Keyring backed by AWS KMS envelope
 // encryption. cryptostore's symmetric data keys are never stored in plaintext:
 // KMS GenerateDataKey returns a fresh data key together with a KMS-encrypted
 // ("wrapped") copy, which is what gets persisted; KMS Decrypt unwraps it on
@@ -11,7 +11,7 @@
 //
 // Rotation is online: Generate a new data key under the same (or a new) KMS key,
 // SetActive to it; existing values keep decrypting under their old key id.
-package kmskeyring
+package awskms
 
 import (
 	"context"

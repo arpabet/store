@@ -1,4 +1,4 @@
-module go.arpabet.com/store/middleware/crypto/kms
+module go.arpabet.com/store/middleware/crypto/kms/aws
 
 go 1.25.0
 

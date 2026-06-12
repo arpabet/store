@@ -3,58 +3,52 @@
  * SPDX-License-Identifier: BUSL-1.1
  */
 
-package kmskeyring_test
+package gcpkms_test
 
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
 	"errors"
-	"io"
 	"testing"
 
-	"github.com/aws/aws-sdk-go-v2/service/kms"
+	kmspb "cloud.google.com/go/kms/apiv1/kmspb"
+	gax "github.com/googleapis/gax-go/v2"
 	"github.com/stretchr/testify/require"
 	"go.arpabet.com/store"
 	cryptostore "go.arpabet.com/store/middleware/crypto"
-	kmskeyring "go.arpabet.com/store/middleware/crypto/kms"
+	gcpkms "go.arpabet.com/store/middleware/crypto/kms/gcp"
 	memstore "go.arpabet.com/store/providers/mem"
 	"go.arpabet.com/store/storetest"
 )
 
-// fakeKMS is a stand-in for AWS KMS that needs no credentials. GenerateDataKey
-// returns a real random 32-byte key; the "ciphertext blob" is a reversible
-// envelope (prefix + plaintext) so any instance can Decrypt it — which also lets
-// the persist/reload test use a brand new client.
-type fakeKMS struct{ keyID string }
+// fakeKMS is a stand-in for Cloud KMS that needs no credentials. The "ciphertext"
+// is a reversible envelope (prefix + plaintext) so any instance can Decrypt it,
+// which lets the persist/reload test use a brand new client.
+type fakeKMS struct{}
 
-var fakePrefix = []byte("FAKEKMS:")
+var fakePrefix = []byte("FAKEGCP:")
 
-func (f *fakeKMS) GenerateDataKey(ctx context.Context, in *kms.GenerateDataKeyInput, _ ...func(*kms.Options)) (*kms.GenerateDataKeyOutput, error) {
-	if in.KeyId == nil || *in.KeyId == "" {
-		return nil, errors.New("fakekms: missing KeyId")
+func (f *fakeKMS) Encrypt(ctx context.Context, req *kmspb.EncryptRequest, _ ...gax.CallOption) (*kmspb.EncryptResponse, error) {
+	if req.Name == "" {
+		return nil, errors.New("fakekms: missing Name")
 	}
-	key := make([]byte, 32)
-	if _, err := io.ReadFull(rand.Reader, key); err != nil {
-		return nil, err
-	}
-	blob := append(append([]byte{}, fakePrefix...), key...)
-	return &kms.GenerateDataKeyOutput{Plaintext: key, CiphertextBlob: blob, KeyId: in.KeyId}, nil
+	ct := append(append([]byte{}, fakePrefix...), req.Plaintext...)
+	return &kmspb.EncryptResponse{Name: req.Name, Ciphertext: ct}, nil
 }
 
-func (f *fakeKMS) Decrypt(ctx context.Context, in *kms.DecryptInput, _ ...func(*kms.Options)) (*kms.DecryptOutput, error) {
-	if !bytes.HasPrefix(in.CiphertextBlob, fakePrefix) {
-		return nil, errors.New("fakekms: invalid ciphertext blob")
+func (f *fakeKMS) Decrypt(ctx context.Context, req *kmspb.DecryptRequest, _ ...gax.CallOption) (*kmspb.DecryptResponse, error) {
+	if !bytes.HasPrefix(req.Ciphertext, fakePrefix) {
+		return nil, errors.New("fakekms: invalid ciphertext")
 	}
-	return &kms.DecryptOutput{Plaintext: in.CiphertextBlob[len(fakePrefix):], KeyId: in.KeyId}, nil
+	return &kmspb.DecryptResponse{Plaintext: req.Ciphertext[len(fakePrefix):]}, nil
 }
 
-const testKeyID = "alias/store-test"
+const testKeyName = "projects/p/locations/global/keyRings/r/cryptoKeys/k"
 
-// The KMS-wrapped crypto store must pass the full conformance suite.
+// The GCP-KMS-wrapped crypto store must pass the full conformance suite.
 func TestConformance(t *testing.T) {
 	storetest.RunConformance(t, func(t *testing.T) store.ManagedDataStore {
-		kr := kmskeyring.New(&fakeKMS{}, testKeyID)
+		kr := gcpkms.New(&fakeKMS{}, testKeyName)
 		_, err := kr.Generate(1)
 		require.NoError(t, err)
 		delegate := memstore.New("conf")
@@ -66,36 +60,36 @@ func TestConformance(t *testing.T) {
 }
 
 func TestRoundTripAndAtRest(t *testing.T) {
-	kr := kmskeyring.New(&fakeKMS{}, testKeyID)
+	kr := gcpkms.New(&fakeKMS{}, testKeyName)
 	_, err := kr.Generate(1)
 	require.NoError(t, err)
 
-	delegate := memstore.New("kms")
+	delegate := memstore.New("gcpkms")
 	defer delegate.Destroy()
 	s, err := cryptostore.NewWithKeyring(delegate.Interface(), kr)
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	const secret = "card-number-4111111111111111"
-	require.NoError(t, s.Set(ctx).ByKey("pci:card").String(secret))
+	const secret = "national-id-AB1234567"
+	require.NoError(t, s.Set(ctx).ByKey("pii:nid").String(secret))
 
-	got, err := s.Get(ctx).ByKey("pci:card").ToString()
+	got, err := s.Get(ctx).ByKey("pii:nid").ToString()
 	require.NoError(t, err)
 	require.Equal(t, secret, got)
 
-	atRest, err := delegate.Interface().Get(ctx).ByKey("pci:card").ToBinary()
+	atRest, err := delegate.Interface().Get(ctx).ByKey("pii:nid").ToBinary()
 	require.NoError(t, err)
 	require.NotContains(t, string(atRest), secret)
 }
 
-// Persisting the KMS-wrapped data key and reloading it with a fresh client/keyring
+// Persisting the wrapped data key and reloading it with a fresh client/keyring
 // (simulating a restart) must recover existing values.
 func TestPersistReload(t *testing.T) {
-	kr := kmskeyring.New(&fakeKMS{}, testKeyID)
+	kr := gcpkms.New(&fakeKMS{}, testKeyName)
 	wrapped, err := kr.Generate(1)
 	require.NoError(t, err)
 
-	delegate := memstore.New("kms")
+	delegate := memstore.New("gcpkms")
 	defer delegate.Destroy()
 	s, err := cryptostore.NewWithKeyring(delegate.Interface(), kr)
 	require.NoError(t, err)
@@ -104,7 +98,7 @@ func TestPersistReload(t *testing.T) {
 	require.NoError(t, s.Set(ctx).ByKey("k:a").String("v1"))
 
 	// "restart": new client + keyring, only the wrapped blob loaded
-	kr2 := kmskeyring.New(&fakeKMS{}, testKeyID)
+	kr2 := gcpkms.New(&fakeKMS{}, testKeyName)
 	kr2.AddWrapped(1, wrapped)
 	s2, err := cryptostore.NewWithKeyring(delegate.Interface(), kr2)
 	require.NoError(t, err)
@@ -115,11 +109,11 @@ func TestPersistReload(t *testing.T) {
 }
 
 func TestRotation(t *testing.T) {
-	kr := kmskeyring.New(&fakeKMS{}, testKeyID)
+	kr := gcpkms.New(&fakeKMS{}, testKeyName)
 	_, err := kr.Generate(1)
 	require.NoError(t, err)
 
-	delegate := memstore.New("kms")
+	delegate := memstore.New("gcpkms")
 	defer delegate.Destroy()
 	s, err := cryptostore.NewWithKeyring(delegate.Interface(), kr)
 	require.NoError(t, err)
