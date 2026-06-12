@@ -89,8 +89,10 @@ themselves stores, so they compose and remain interchangeable:
   per-value codec marker; incompressible/tiny values are stored uncompressed so
   a value is never inflated. Compose it *outside* crypto
   (`compress(crypto(base))`) so plaintext is compressed before it is encrypted.
-- **otel** — wraps every operation in an OpenTelemetry span (bean name, op, key;
-  values are never recorded, safe for PII).
+- **otel** — OpenTelemetry observability: a span per operation **plus metrics**
+  (operation counter `store.operations`, error counter `store.errors`, latency
+  histogram `store.operation.duration`). Bean/op are recorded; values never are.
+  Prometheus users scrape via the OTel Prometheus bridge.
 
 ```go
 base, _ := bboltstore.New("config", "config.db", 0666)
