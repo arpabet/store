@@ -11,4 +11,5 @@ use (
 	./middleware/crypto
 	./middleware/otel
 	./middleware/crypto/age
+	./middleware/crypto/kms
 )

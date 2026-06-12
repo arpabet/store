@@ -28,6 +28,7 @@ jobs:
           - { module: providers/pebble, testflags: "-race -cover" }
           - { module: middleware/crypto, testflags: "-race -cover" }
           - { module: middleware/crypto/age, testflags: "-race -cover" }
+          - { module: middleware/crypto/kms, testflags: "-race -cover" }
           - { module: middleware/otel, testflags: "-race -cover" }
     steps:
       - name: Checkout
