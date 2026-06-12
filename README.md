@@ -58,6 +58,10 @@ themselves stores, so they compose and remain interchangeable:
   [`middleware/crypto/age`](middleware/crypto/age) (age-wrapped data keys),
   [`middleware/crypto/kms/aws`](middleware/crypto/kms/aws) (AWS KMS) and
   [`middleware/crypto/kms/gcp`](middleware/crypto/kms/gcp) (Google Cloud KMS).
+- **compress** — transparently compresses values (zstd or snappy) with a
+  per-value codec marker; incompressible/tiny values are stored uncompressed so
+  a value is never inflated. Compose it *outside* crypto
+  (`compress(crypto(base))`) so plaintext is compressed before it is encrypted.
 - **otel** — wraps every operation in an OpenTelemetry span (bean name, op, key;
   values are never recorded, safe for PII).
 

@@ -30,6 +30,7 @@ jobs:
           - { module: middleware/crypto/age, testflags: "-race -cover" }
           - { module: middleware/crypto/kms/aws, testflags: "-race -cover" }
           - { module: middleware/crypto/kms/gcp, testflags: "-race -cover" }
+          - { module: middleware/compress, testflags: "-race -cover" }
           - { module: middleware/otel, testflags: "-race -cover" }
     steps:
       - name: Checkout

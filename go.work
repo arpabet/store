@@ -9,6 +9,7 @@ use (
 	./providers/mem
 	./providers/pebble
 	./middleware/crypto
+	./middleware/compress
 	./middleware/otel
 	./middleware/crypto/age
 	./middleware/crypto/kms/aws
