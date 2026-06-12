@@ -1,0 +1,50 @@
+name: build
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build ${{ matrix.module }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { module: ., testflags: "-race -cover" }                 # interface (go.arpabet.com/store)
+          - { module: providers/badger, testflags: "-race -cover" }
+          - { module: providers/bbolt, testflags: "-race -cover" }
+          # boltdb/bolt (archived) does unsafe pointer arithmetic that
+          # trips -race/checkptr on modern Go, so it runs without -race.
+          - { module: providers/bolt, testflags: "-cover" }
+          - { module: providers/mem, testflags: "-race -cover" }
+          - { module: providers/pebble, testflags: "-race -cover" }
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache-dependency-path: |
+            go.work.sum
+            **/go.sum
+
+      - name: Build
+        working-directory: ${{ matrix.module }}
+        run: go build -v ./...
+
+      - name: Vet
+        working-directory: ${{ matrix.module }}
+        run: go vet ./...
+
+      - name: Test
+        working-directory: ${{ matrix.module }}
+        run: go test ${{ matrix.testflags }} ./...
