@@ -20,6 +20,7 @@ store/                      module go.arpabet.com/store              (the interf
   providers/bolt/           module .../providers/bolt                (boltdb, legacy)
   providers/mem/            module .../providers/mem                 (in-memory cache)
   providers/rosedb/         module .../providers/rosedb              (Bitcask, native TTL)
+  providers/nutsdb/         module .../providers/nutsdb              (nutsdb, native txns + TTL)
   middleware/crypto/        module .../middleware/crypto             (AES-GCM at rest)
   middleware/otel/          module .../middleware/otel               (OpenTelemetry tracing)
 ```
@@ -39,6 +40,7 @@ providers/bbolt  | etcd bbolt  | Y | Y | Y | Y | N | Y | via crypto | Config
 providers/bolt   | boltdb (legacy) | Y | Y | Y | Y | N | Y | via crypto | Config (legacy)
 providers/mem    | ttlcache v3 | Y | Y | Y | Y | N | N | via crypto | Hot data
 providers/rosedb | rosedb (Bitcask) | Y | Y | Y | Y | N | Y | via crypto | App data
+providers/nutsdb | nutsdb | Y | Y | Y | Y | Y | Y | via crypto | App data
 
 Batch writes (`s.Batch(ctx).Put(...).Do()` / `SetBatchRaw`) are available on every
 store; `BatchAtomic` marks the ones where a batch is all-or-nothing (single
@@ -57,6 +59,14 @@ those engines is served by an in-process fan-out hub. Badger uses its native
 TTL, MVCC versions, transactions and `Subscribe`. rosedb uses native TTL (disk
 expiry — so it needs no sweeper) and native ordered iteration and atomic batches,
 with the envelope carrying the version and watch served by the hub.
+
+nutsdb adds native transactions (exposed via `BeginTransaction`/`EndTransaction`,
+like Badger; a single writer at a time gives serialized read-modify-write) and
+native timer-wheel TTL (disk expiry — so it needs no sweeper). Its bucket model
+maps to the bolt-style `bucket:key` separator: a full key `"bucket:key"` is
+stored under nutsdb bucket `bucket`, with each bucket a BTree for ordered scans.
+The envelope carries the version; watch is served by the hub, and events for
+writes inside an explicit transaction are published on commit.
 
 **Watch semantics.** Watch is **in-process** (mutations through this process's
 handle only; a different process writing the same file is not observed) and

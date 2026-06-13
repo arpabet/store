@@ -25,6 +25,7 @@ jobs:
           # trips -race/checkptr on modern Go, so it runs without -race.
           - { module: providers/bolt, testflags: "-cover" }
           - { module: providers/mem, testflags: "-race -cover" }
+          - { module: providers/nutsdb, testflags: "-race -cover" }
           - { module: providers/pebble, testflags: "-race -cover" }
           - { module: providers/rosedb, testflags: "-race -cover" }
           - { module: middleware/crypto, testflags: "-race -cover" }
