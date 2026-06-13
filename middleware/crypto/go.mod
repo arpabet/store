@@ -2,7 +2,7 @@ module go.arpabet.com/store/middleware/crypto
 
 go 1.25.0
 
-require go.arpabet.com/store v1.2.0
+require go.arpabet.com/store v1.1.0
 
 require (
 	github.com/pkg/errors v0.9.1 // indirect

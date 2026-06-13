@@ -5,7 +5,7 @@ go 1.25.0
 require (
 	github.com/jellydator/ttlcache/v3 v3.4.0
 	github.com/stretchr/testify v1.11.1
-	go.arpabet.com/store v1.2.0
+	go.arpabet.com/store v1.1.0
 	go.arpabet.com/store/storetest v0.0.0-20260612014414-94a022ef7c5b
 )
 

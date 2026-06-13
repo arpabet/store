@@ -4,7 +4,7 @@ go 1.25.0
 
 require (
 	github.com/stretchr/testify v1.11.1
-	go.arpabet.com/store v1.2.0
+	go.arpabet.com/store v1.1.0
 )
 
 require (
