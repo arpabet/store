@@ -18,6 +18,61 @@ top of the shared version gets a higher **patch** via a per-module override.
 ./release.sh v1.3.0
 ```
 
+## Cutting a coordinated minor (Phase 2 → `v1.2.0`)
+
+Phase 2 only **adds** to the `store` interface — the capability/watch/sweeper/
+transaction surface, the `providers/nutsdb` engine, and the `storetest`
+`RunRotation` / `RunBenchmarks` helpers — without changing or removing any
+existing signature. Additive, backward-compatible changes are a **minor** bump
+under semver (`MINOR`+1, `PATCH`→0), and since an interface change ripples into
+every module, they all move together to that one minor. **No per-module
+overrides are needed**: nothing carries a change beyond the shared version, so
+this is the plain `./release.sh v1.2.0` case.
+
+`release.sh` discovers every module under the repo automatically
+(`find . -name go.mod`), so the modules added in Phase 2 — `providers/nutsdb` and
+the internal `benchmarks` runner — are tagged at `v1.2.0` alongside everyone
+else; you never list them. (`benchmarks` is a workspace-only leaf no one imports;
+it gets a tag for uniformity, which is harmless.)
+
+Pick the next unused minor — `v1.2.0` here.
+
+1. **Verify green first** — the script does not run tests:
+
+   ```bash
+   for d in . storetest benchmarks providers/* middleware/*; do (cd "$d" && go test ./...); done
+   ```
+
+2. **Preview the plan** (changes nothing):
+
+   ```bash
+   ./release.sh --dry-run v1.2.0
+   ```
+
+   Expect the root at `v1.2.0` and every submodule — `storetest/v1.2.0`,
+   `providers/nutsdb/v1.2.0`, `benchmarks/v1.2.0`, `middleware/*/v1.2.0`, … —
+   each pinned to the interface at `v1.2.0`, with **no** override lines.
+
+3. **Cut and push** from a clean `main`:
+
+   ```bash
+   ./release.sh v1.2.0
+   ```
+
+   This pins `require go.arpabet.com/store@v1.2.0` in every module's `go.mod`,
+   commits `release v1.2.0: pin go.arpabet.com/store@v1.2.0`, tags the root and
+   each submodule at that commit, and pushes the branch + all tags. Use
+   `--no-push` to stage the commit and tags locally and inspect them first.
+
+4. **(Optional)** refresh each module's standalone `go.sum` once the
+   `store@v1.2.0` tag is fetchable — see
+   [After the release](#after-the-release-standalone-buildable-modules-optional).
+
+Because the bump is purely additive, consumers on the previous release upgrade
+with a plain `go get go.arpabet.com/store/...@v1.2.0` and nothing breaks. A later
+fix to a single engine rides on top as a patch override (e.g.
+`./release.sh v1.2.0 providers/nutsdb=v1.2.1`), as described below.
+
 ## Prerequisites
 
 - Run from the repository root (where `.git`, `go.work` and the root `go.mod` live).
@@ -28,7 +83,7 @@ top of the shared version gets a higher **patch** via a per-module override.
   run the test suite — verify first):
 
   ```bash
-  for d in . storetest providers/* middleware/*; do (cd "$d" && go test ./...); done
+  for d in . storetest benchmarks providers/* middleware/*; do (cd "$d" && go test ./...); done
   ```
 
 ## Version rules
