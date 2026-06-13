@@ -72,6 +72,23 @@ func TestConformance(t *testing.T) {
 	})
 }
 
+// TestRotationConformance runs the shared rotation suite, rotating the keyring's
+// active key from id 1 to id 2 as the rotate hook.
+func TestRotationConformance(t *testing.T) {
+	storetest.RunRotation(t, func(t *testing.T) (store.ManagedDataStore, func() error) {
+		delegate := memstore.New("rotconf")
+		kr := cryptostore.NewStaticKeyring().Add(1, testKey)
+		s, err := cryptostore.NewWithKeyring(delegate.Interface(), kr)
+		require.NoError(t, err)
+		t.Cleanup(func() { delegate.Destroy() })
+		rotate := func() error {
+			kr.Add(2, testKey2)
+			return kr.SetActive(2)
+		}
+		return s, rotate
+	})
+}
+
 func TestEncryptedAtRest(t *testing.T) {
 	delegate := memstore.New("conf")
 	defer delegate.Destroy()

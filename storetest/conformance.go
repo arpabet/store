@@ -67,6 +67,7 @@ func RunConformance(t *testing.T, newStore Factory) {
 		t.Run("TTL", func(t *testing.T) { testTTL(t, newStore) })
 		t.Run("Expiry", func(t *testing.T) { testExpiry(t, newStore) })
 		t.Run("Touch", func(t *testing.T) { testTouch(t, newStore) })
+		t.Run("BatchTTL", func(t *testing.T) { testBatchTTL(t, newStore) })
 		if sweepable {
 			t.Run("Sweep", func(t *testing.T) { testSweep(t, newStore) })
 		}
@@ -74,6 +75,7 @@ func RunConformance(t *testing.T, newStore Factory) {
 	if caps.Has(store.OrderedCapability) {
 		t.Run("Ordered", func(t *testing.T) { testOrdered(t, newStore) })
 		t.Run("Range", func(t *testing.T) { testRange(t, newStore) })
+		t.Run("RangeReverse", func(t *testing.T) { testRangeReverse(t, newStore) })
 		t.Run("Pagination", func(t *testing.T) { testPagination(t, newStore) })
 	}
 	if caps.Has(store.WatchCapability) {
@@ -390,6 +392,63 @@ func testRange(t *testing.T, newStore Factory) {
 	require.Equal(t, []string{key("d"), key("e")}, got)
 }
 
+// testRangeReverse verifies descending enumeration: a plain reverse scan returns
+// keys in descending order, and a reverse Range over [from, to) returns the same
+// keys as the forward scan but in reverse (from inclusive, to exclusive).
+func testRangeReverse(t *testing.T, newStore Factory) {
+	s := newStore(t)
+	ctx := context.Background()
+
+	for _, name := range []string{"a", "b", "c", "d", "e"} {
+		require.NoError(t, s.Set(ctx).ByRawKey([]byte(key(name))).String(name))
+	}
+
+	// full reverse: e, d, c, b, a
+	var got []string
+	err := s.Enumerate(ctx).ByPrefix(prefix).Reverse().Do(func(e *store.RawEntry) bool {
+		got = append(got, string(e.Key))
+		return true
+	})
+	require.NoError(t, err)
+	require.Equal(t, []string{key("e"), key("d"), key("c"), key("b"), key("a")}, got)
+
+	// reverse [b, d) -> c, b (d exclusive, b inclusive)
+	got = nil
+	err = s.Enumerate(ctx).Range([]byte(key("b")), []byte(key("d"))).Reverse().Do(func(e *store.RawEntry) bool {
+		got = append(got, string(e.Key))
+		return true
+	})
+	require.NoError(t, err)
+	require.Equal(t, []string{key("c"), key("b")}, got)
+}
+
+// testBatchTTL verifies that per-entry TTLs in a batch are honored: an entry with
+// a short TTL expires while one with a long TTL survives and reports its TTL.
+func testBatchTTL(t *testing.T, newStore Factory) {
+	s := newStore(t)
+	ctx := context.Background()
+
+	require.NoError(t, s.Batch(ctx).
+		Put([]byte(key("bt_short")), []byte("x"), 1).
+		Put([]byte(key("bt_long")), []byte("y"), 100).
+		Do())
+
+	var ttl int
+	_, err := s.Get(ctx).ByRawKey([]byte(key("bt_long"))).WithTtl(&ttl).ToString()
+	require.NoError(t, err)
+	require.True(t, ttl > 0 && ttl <= 100, "long batch entry should report remaining ttl, got %d", ttl)
+
+	time.Sleep(1500 * time.Millisecond)
+
+	v, err := s.Get(ctx).ByRawKey([]byte(key("bt_short"))).ToString()
+	require.NoError(t, err)
+	require.Equal(t, "", v, "short-ttl batch entry should have expired")
+
+	v, err = s.Get(ctx).ByRawKey([]byte(key("bt_long"))).ToString()
+	require.NoError(t, err)
+	require.Equal(t, "y", v, "long-ttl batch entry should still be present")
+}
+
 func testPagination(t *testing.T, newStore Factory) {
 	s := newStore(t)
 	ctx := context.Background()
@@ -505,4 +564,43 @@ delwait:
 	case <-time.After(3 * time.Second):
 		t.Fatal("watch did not return after context cancel")
 	}
+}
+
+// RotatableFactory returns a fresh store together with a rotate function that
+// switches the store to a new active encryption key (the rotation point). It is
+// used by RunRotation and lives outside RunConformance because rotation is a
+// property of an encrypted/key-managed store, not of every backend.
+type RotatableFactory func(t *testing.T) (s store.ManagedDataStore, rotate func() error)
+
+// RunRotation asserts online key rotation through the public API: values written
+// before a rotation must still read back afterward (decrypted under their
+// original key), new writes must succeed under the new active key, and an
+// existing key overwritten after rotation must read back its new value. It makes
+// no assumptions about the at-rest format, so any store that can rotate its
+// active key can reuse it.
+func RunRotation(t *testing.T, newStore RotatableFactory) {
+	s, rotate := newStore(t)
+	ctx := context.Background()
+
+	require.NoError(t, s.Set(ctx).ByKey("%s", key("old")).String("old-value"))
+
+	require.NoError(t, rotate(), "rotation must succeed")
+
+	require.NoError(t, s.Set(ctx).ByKey("%s", key("new")).String("new-value"))
+
+	// a value written before rotation still decrypts under its original key
+	old, err := s.Get(ctx).ByKey("%s", key("old")).ToString()
+	require.NoError(t, err)
+	require.Equal(t, "old-value", old, "pre-rotation value must remain readable")
+
+	// a value written after rotation reads back under the new active key
+	got, err := s.Get(ctx).ByKey("%s", key("new")).ToString()
+	require.NoError(t, err)
+	require.Equal(t, "new-value", got)
+
+	// overwriting a pre-rotation key after rotation re-seals it under the new key
+	require.NoError(t, s.Set(ctx).ByKey("%s", key("old")).String("rewritten"))
+	got, err = s.Get(ctx).ByKey("%s", key("old")).ToString()
+	require.NoError(t, err)
+	require.Equal(t, "rewritten", got)
 }

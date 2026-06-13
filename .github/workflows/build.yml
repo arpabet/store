@@ -18,7 +18,11 @@ jobs:
       matrix:
         include:
           - { module: ., testflags: "-race -cover" }                 # interface (go.arpabet.com/store)
-          - { module: storetest, testflags: "-race -cover" }         # conformance suite
+          - { module: storetest, testflags: "-race -cover" }         # conformance + benchmark harness
+          # benchmarks imports every provider (incl. boltdb/bolt, whose unsafe
+          # pointer math trips -race/checkptr), and has no Test funcs to run —
+          # so this just compile-checks the suite. Runs without -race.
+          - { module: benchmarks, testflags: "-cover" }
           - { module: providers/badger, testflags: "-race -cover" }
           - { module: providers/bbolt, testflags: "-race -cover" }
           # boltdb/bolt (archived) does unsafe pointer arithmetic that

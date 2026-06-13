@@ -330,6 +330,31 @@ func (t *implBadgerStore) getImpl(ctx context.Context, key []byte, ttlPtr *int, 
 }
 
 func (t *implBadgerStore) EnumerateRaw(ctx context.Context, prefix, seek []byte, batchSize int, onlyKeys bool, reverse bool, cb func(entry *store.RawEntry) bool) error {
+	// Reverse is served by collecting the ascending scan and replaying it in
+	// reverse: badger's native reverse iterator seeks to the last key <= seek,
+	// but the seek defaults to the prefix start (which sorts before every
+	// prefixed key), so a native reverse prefix scan would find nothing. Caching
+	// the ascending scan keeps the seek semantics identical to the forward path
+	// and matches the other ordered providers.
+	if reverse {
+		var cache []*store.RawEntry
+		if err := t.ascend(ctx, prefix, seek, batchSize, onlyKeys, func(e *store.RawEntry) bool {
+			cache = append(cache, e)
+			return true
+		}); err != nil {
+			return err
+		}
+		for j := len(cache) - 1; j >= 0; j-- {
+			if !cb(cache[j]) {
+				break
+			}
+		}
+		return nil
+	}
+	return t.ascend(ctx, prefix, seek, batchSize, onlyKeys, cb)
+}
+
+func (t *implBadgerStore) ascend(ctx context.Context, prefix, seek []byte, batchSize int, onlyKeys bool, cb func(entry *store.RawEntry) bool) error {
 
 	txn, parentTx, err := t.getOrCreateTransaction(ctx, false)
 	if err != nil {
@@ -345,7 +370,7 @@ func (t *implBadgerStore) EnumerateRaw(ctx context.Context, prefix, seek []byte,
 	options := badger.IteratorOptions{
 		PrefetchValues: !onlyKeys,
 		PrefetchSize:   batchSize,
-		Reverse:        reverse,
+		Reverse:        false,
 		AllVersions:    false,
 		Prefix:         prefix,
 	}
@@ -361,7 +386,9 @@ func (t *implBadgerStore) EnumerateRaw(ctx context.Context, prefix, seek []byte,
 		}
 
 		item := iter.Item()
-		key := item.Key()
+		// copy the key: it aliases iterator-owned memory and must outlive the
+		// iteration when the reverse path caches entries.
+		key := item.KeyCopy(nil)
 		var value []byte
 		if !onlyKeys {
 			value, err = item.ValueCopy(nil)

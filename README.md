@@ -13,7 +13,8 @@ local development workspace.
 
 ```
 store/                      module go.arpabet.com/store              (the interface)
-  storetest/                module .../storetest                     (conformance suite)
+  storetest/                module .../storetest                     (conformance + benchmark suite)
+  benchmarks/               module .../benchmarks                    (cross-engine benchmark runner)
   providers/badger/         module .../providers/badger              (BadgerDB v4)
   providers/pebble/         module .../providers/pebble              (PebbleDB v2)
   providers/bbolt/          module .../providers/bbolt               (etcd bbolt)
@@ -126,6 +127,31 @@ kr := cryptostore.NewStaticKeyring().Add(1, oldKey)
 enc, _ = cryptostore.NewWithKeyring(base.Interface(), kr)
 kr.Add(2, newKey); kr.SetActive(2)               // new writes use key 2
 ```
+
+## Testing & benchmarks
+
+`storetest` is the shared, capability-gated suite every provider must pass — a
+behavior is asserted only if the provider advertises the matching capability:
+
+- `storetest.RunConformance(t, factory)` — correctness (get/set/remove, TTL and
+  expiry, batch + atomic batch, CAS/version, ordered enumeration, range (forward
+  and reverse), pagination, sweep, watch).
+- `storetest.RunRotation(t, factory)` — online key rotation for encrypted stores
+  (pre-rotation values still decrypt; new writes use the active key).
+- `storetest.RunBenchmarks(b, factory)` — the shared benchmark suite (Set, Get,
+  Batch, Increment, CompareAndSet, Enumerate, Range, Sweep), gated the same way.
+
+The `benchmarks` module wires `RunBenchmarks` to every engine plus a crypto key
+rotation benchmark, so they can be compared head-to-head:
+
+```bash
+go test -run '^$' -bench . -benchmem ./benchmarks/...      # all engines
+go test -run '^$' -bench BenchmarkNutsdb/Set ./benchmarks/...
+```
+
+CI runs the conformance suite per module on every push/PR (`.github/workflows/build.yml`);
+benchmarks are heavy and noisy, so they run on demand and weekly via a separate
+workflow (`.github/workflows/benchmark.yml`) that publishes results as an artifact.
 
 ## Releasing
 

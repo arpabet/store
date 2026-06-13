@@ -1,0 +1,56 @@
+name: benchmark
+
+# Benchmarks are heavy and noisy, so they do not gate PRs. This workflow runs
+# the cross-engine suite (benchmarks/ module) on demand and on a weekly schedule,
+# publishing the raw results as a downloadable artifact.
+on:
+  workflow_dispatch:
+    inputs:
+      benchtime:
+        description: "go test -benchtime value (e.g. 1s, 3s, 1000x)"
+        required: false
+        default: "1s"
+      pattern:
+        description: "benchmark name regexp passed to -bench"
+        required: false
+        default: "."
+  schedule:
+    - cron: "0 6 * * 1" # Mondays 06:00 UTC
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    name: benchmark cross-engine
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache-dependency-path: |
+            go.work.sum
+            **/go.sum
+
+      - name: Run benchmarks
+        working-directory: benchmarks
+        env:
+          BENCHTIME: ${{ github.event.inputs.benchtime || '1s' }}
+          PATTERN: ${{ github.event.inputs.pattern || '.' }}
+        run: |
+          set -o pipefail
+          go test -run '^$' -bench "$PATTERN" -benchmem -benchtime "$BENCHTIME" ./... \
+            | tee benchmark-results.txt
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: benchmarks/benchmark-results.txt
+          retention-days: 90
