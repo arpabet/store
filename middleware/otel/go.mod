@@ -3,7 +3,7 @@ module go.arpabet.com/store/middleware/otel
 go 1.25.0
 
 require (
-	go.arpabet.com/store v1.0.1
+	go.arpabet.com/store v1.2.0
 	go.opentelemetry.io/otel v1.37.0
 	go.opentelemetry.io/otel/trace v1.37.0
 )

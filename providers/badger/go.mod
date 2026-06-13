@@ -5,7 +5,7 @@ go 1.25.0
 require (
 	github.com/dgraph-io/badger/v4 v4.9.2
 	github.com/pkg/errors v0.9.1
-	go.arpabet.com/store v1.0.1
+	go.arpabet.com/store v1.2.0
 	go.uber.org/zap v1.28.0
 )
 
