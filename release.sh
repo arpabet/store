@@ -1,185 +1,160 @@
 #!/usr/bin/env bash
 #
-# Copyright (c) 2025 Karagatan LLC.
-# SPDX-License-Identifier: BUSL-1.1
+# Coordinated release for a go.arpabet.com multi-module repository.
 #
-# Tags a coordinated release of the store interface and every provider/middleware
-# module in this multi-module repository.
+# Repo-agnostic: the module prefix is auto-detected from go.mod, so this exact
+# script works unchanged in every repo (servion, sprint, store, record, ...).
+# Keep it byte-identical across repos.
 #
-# Every module is tagged with the SAME base version (an interface change ripples
-# into all of them). A module that carries an extra change can be bumped on its
-# own with a per-module override.
+# One shared version moves every module; an interface change ripples into all of
+# them. A module carrying an extra change takes a higher patch via a per-module
+# override (keyed by subdir, "." for the root module):
 #
-# Go module tags must be valid 3-component semver: vMAJOR.MINOR.PATCH (optionally
-# -prerelease). FOUR-number versions like v1.2.3.4 are NOT valid and are rejected
-# by the go tool/proxy -- express "shared version plus an extra change in module X"
-# as a higher PATCH for that one module, e.g.:
+#     ./release.sh v1.3.0 grpc=v1.3.1
 #
-#     ./release.sh v1.3.0 providers/badger=v1.3.1
+# Modules are discovered automatically (every dir with a go.mod, excluding
+# examples). The root module is tagged "vX.Y.Z"; each submodule "<subdir>/vX.Y.Z".
+# Before tagging, internal `require <prefix>/X` lines are pinned to the release
+# version and local-dev `replace <prefix>/X => ../X` bootstrap directives are
+# stripped (consumers ignore replaces; this keeps published go.mods clean).
+# go.work covers local dev post-release.
 #
-# Tags follow the multi-module convention: the root module is "vX.Y.Z" and every
-# submodule is "<subpath>/vX.Y.Z" (e.g. providers/badger/v1.3.0).
+# Re-runs are safe: existing tags are skipped and an empty release commit is
+# tolerated, so a newly added submodule can be tagged at an already-released
+# shared version.
 #
-# Usage:
-#     ./release.sh [--dry-run] [--no-push] <version> [module=version ...]
+# Usage: ./release.sh [--dry-run] [--no-push] <version> [module=version ...]
 #
-#     --dry-run   print the plan (require bumps + tags) and exit, change nothing
+#     --dry-run   print the plan + go.mod diff and exit, change nothing
 #     --no-push   create the commit and tags locally but do not push
+#
+# Compatible with the bash 3.2 that ships on macOS (no associative arrays/mapfile).
 #
 set -euo pipefail
 
-STORE_MODULE="go.arpabet.com/store"
 REMOTE="origin"
+DRY_RUN=0; NO_PUSH=0
+VERSION=""; OVERRIDES=""
 
 die() { echo "error: $*" >&2; exit 1; }
+semver_ok() { case "$1" in v[0-9]*.[0-9]*.[0-9]*) return 0;; *) return 1;; esac; }
+four_part() { case "$1" in v[0-9]*.[0-9]*.[0-9]*.[0-9]*) return 0;; *) return 1;; esac; }
 
-semver_ok() {
-	# vMAJOR.MINOR.PATCH with optional -prerelease ; rejects 4+ components
-	[[ "$1" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]
-}
-
-validate_version() {
-	local v="$1"
-	if [[ "$v" =~ ^v[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+ ]]; then
-		die "'$v' has four numbers; Go requires 3-component semver (vX.Y.Z). Use a higher patch for the module that changed, e.g. providers/badger=vX.Y.(Z+1)."
-	fi
-	semver_ok "$v" || die "'$v' is not valid semver (expected vMAJOR.MINOR.PATCH)."
-}
-
-# ---- parse args ----------------------------------------------------------------
-
-DRY_RUN=0
-PUSH=1
-BASE=""
-declare -a OVERRIDE_ARGS=()
-
-while [[ $# -gt 0 ]]; do
-	case "$1" in
+for a in "$@"; do
+	case "$a" in
 		--dry-run) DRY_RUN=1 ;;
-		--no-push) PUSH=0 ;;
-		-h|--help) sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
-		-*) die "unknown flag: $1" ;;
-		*) if [[ -z "$BASE" ]]; then BASE="$1"; else OVERRIDE_ARGS+=("$1"); fi ;;
+		--no-push) NO_PUSH=1 ;;
+		-h|--help) awk 'NR>1 && /^#/{sub(/^# ?/,"");print;next} NR>1{exit}' "$0"; exit 0 ;;
+		*=v*)      OVERRIDES="$OVERRIDES $a" ;;
+		v*)        VERSION="$a" ;;
+		*)         die "unrecognized arg: $a" ;;
 	esac
-	shift
+done
+[ -n "$VERSION" ] || die "usage: ./release.sh [--dry-run] [--no-push] <version> [module=version ...]"
+semver_ok "$VERSION" || die "'$VERSION' is not vMAJOR.MINOR.PATCH"
+! four_part "$VERSION" || die "'$VERSION' has four numbers; Go requires vX.Y.Z. Use a higher patch override for the module that changed."
+for tok in $OVERRIDES; do
+	v="${tok#*=}"
+	semver_ok "$v" || die "override '$tok' version is not vMAJOR.MINOR.PATCH"
+	! four_part "$v" || die "override '$tok' has four numbers; use vX.Y.Z."
 done
 
-[[ -n "$BASE" ]] || die "missing version. Usage: ./release.sh [--dry-run] [--no-push] <version> [module=version ...]"
-validate_version "$BASE"
-
-# validate overrides up front (bash 3.2 compatible: no associative arrays)
-if [[ ${#OVERRIDE_ARGS[@]} -gt 0 ]]; then
-	for a in "${OVERRIDE_ARGS[@]}"; do
-		[[ "$a" == *=* ]] || die "override '$a' must look like module=version"
-		validate_version "${a#*=}"
+# release version for a module key (subdir, or "." for the root module)
+ver_for() {
+	local tok
+	for tok in $OVERRIDES; do
+		case "$tok" in "$1="*) echo "${tok#*=}"; return;; esac
 	done
-fi
-
-version_for() { # module path -> version (override or base)
-	local m="$1" a key val
-	if [[ ${#OVERRIDE_ARGS[@]} -gt 0 ]]; then
-		for a in "${OVERRIDE_ARGS[@]}"; do
-			key="${a%%=*}"; val="${a#*=}"
-			if [[ "$key" == "$m" ]]; then echo "$val"; return; fi
-		done
-	fi
-	echo "$BASE"
+	echo "$VERSION"
 }
-
-tag_for() { # module path + version -> git tag
-	local m="$1" v="$2"
-	if [[ "$m" == "." ]]; then echo "$v"; else echo "$m/$v"; fi
-}
-
-# ---- locate repo + modules -----------------------------------------------------
 
 cd "$(dirname "$0")"
-[[ -d .git ]] || die "must run from the repository root (no .git here)."
-[[ -f go.work ]] || echo "warning: no go.work found at repo root."
-
-# root first, then submodules sorted for stable output
-declare -a MODULES=(".")
-while IFS= read -r f; do
-	d="${f#./}"; d="${d%/go.mod}"
-	MODULES+=("$d")
-done < <(find . -mindepth 2 -name go.mod | sort)
-
-STORE_VERSION="$(version_for .)"
-
-# ---- preflight -----------------------------------------------------------------
+[ -d .git ] || die "must run from the repository root (no .git here)."
+[ -f go.work ] || echo "warning: no go.work at repo root."
+[ -z "$(git status --porcelain)" ] || die "working tree is dirty; commit or stash first."
 
 branch="$(git rev-parse --abbrev-ref HEAD)"
-[[ "$branch" == "main" ]] || echo "warning: on branch '$branch', not 'main'."
+[ "$branch" = "main" ] || echo "warning: on branch '$branch', not 'main'."
 
-if [[ $DRY_RUN -eq 0 && -n "$(git status --porcelain)" ]]; then
-	die "working tree is not clean; commit or stash first."
-fi
+# discover module keys: "." for the root module, "<subdir>" for each submodule;
+# examples are never their own published modules.
+MODULES="$(find . -name go.mod -not -path './.*' -not -path '*/examples/*' \
+	| sed 's#/go.mod$##; s#^\./##' | sort)"
+[ -n "$MODULES" ] || die "no modules found"
 
-# refuse to clobber existing tags
-for m in "${MODULES[@]}"; do
-	tag="$(tag_for "$m" "$(version_for "$m")")"
-	if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
-		die "tag '$tag' already exists."
-	fi
-done
+# auto-detect the module prefix from the first module's go.mod
+first="$(printf '%s\n' "$MODULES" | head -1)"
+firstmod="$(sed -n 's/^module[[:space:]]\{1,\}//p' "$first/go.mod" | head -1)"
+[ -n "$firstmod" ] || die "could not read module path from $first/go.mod"
+if [ "$first" = "." ]; then PREFIX="$firstmod"; else PREFIX="${firstmod%/$first}"; fi
+echo "module prefix: $PREFIX"
 
-# ---- plan ----------------------------------------------------------------------
+# go import path / git tag for a module key
+mod_path() { case "$1" in .) echo "$PREFIX";; *) echo "$PREFIX/$1";; esac; }
+tag_for()  { case "$1" in .) echo "$2";;     *) echo "$1/$2";;        esac; }
 
-echo "Release plan (store interface version: $STORE_VERSION)"
-echo
-printf "  %-22s %-14s %s\n" "MODULE" "TAG" "store require"
-for m in "${MODULES[@]}"; do
-	v="$(version_for "$m")"
-	tag="$(tag_for "$m" "$v")"
-	if [[ "$m" == "." ]]; then
-		printf "  %-22s %-14s %s\n" "$m" "$tag" "(interface)"
+echo "Release plan (shared $VERSION):"
+for m in $MODULES; do
+	t="$(tag_for "$m" "$(ver_for "$m")")"
+	if git rev-parse -q --verify "refs/tags/$t" >/dev/null 2>&1; then
+		printf "  %-22s -> %s (exists, will skip)\n" "$m" "$t"
 	else
-		printf "  %-22s %-14s %s\n" "$m" "$tag" "-> $STORE_VERSION"
+		printf "  %-22s -> %s\n" "$m" "$t"
 	fi
 done
 echo
 
-if [[ $DRY_RUN -eq 1 ]]; then
-	echo "(dry run: no changes made)"
+# rewrite each go.mod: strip bootstrap replaces, pin internal requires
+for m in $MODULES; do
+	gm="$m/go.mod"
+	perl -i -ne "print unless m{^replace \Q$PREFIX\E(/|\s)}" "$gm"
+	for dep in $MODULES; do
+		dpath="$(mod_path "$dep")"
+		dv="$(ver_for "$dep")"
+		perl -i -pe "s{(\Q$dpath\E)\s+v\S+}{\$1 $dv}g" "$gm"
+	done
+done
+
+if [ "$DRY_RUN" -eq 1 ]; then
+	echo "--- dry run: go.mod changes below, nothing committed ---"
+	git --no-pager diff -- '*go.mod' || true
+	git checkout -- . 2>/dev/null || true
 	exit 0
 fi
 
-# ---- bump intra-repo store dependency -----------------------------------------
-
-changed=0
-for m in "${MODULES[@]}"; do
-	[[ "$m" == "." ]] && continue
-	if grep -qE "${STORE_MODULE} v" "$m/go.mod"; then
-		( cd "$m" && go mod edit -require="${STORE_MODULE}@${STORE_VERSION}" )
-		changed=1
-	fi
-done
-
-if [[ $changed -eq 1 && -n "$(git status --porcelain)" ]]; then
-	git add -A
-	git commit -m "release ${BASE}: pin ${STORE_MODULE}@${STORE_VERSION}"
-	echo "committed go.mod dependency bump"
-fi
-
-# ---- create tags ---------------------------------------------------------------
-
-declare -a TAGS=()
-for m in "${MODULES[@]}"; do
-	tag="$(tag_for "$m" "$(version_for "$m")")"
-	git tag -a "$tag" -m "$tag"
-	TAGS+=("$tag")
-	echo "tagged $tag"
-done
-
-# ---- push ----------------------------------------------------------------------
-
-if [[ $PUSH -eq 1 ]]; then
-	git push "$REMOTE" "$branch"
-	git push "$REMOTE" "${TAGS[@]}"
-	echo "pushed branch '$branch' and ${#TAGS[@]} tags to $REMOTE"
+git add -A
+if git diff --cached --quiet; then
+	# go.mods were already in their released form (no replaces to strip, requires
+	# already pinned), so there is nothing to commit — tag the current HEAD.
+	echo "no go.mod changes to commit; tagging current HEAD"
 else
-	echo "skipped push (--no-push). Push manually with:"
-	echo "  git push $REMOTE $branch && git push $REMOTE ${TAGS[*]}"
+	git commit -m "release $VERSION"
 fi
 
-echo "done: released ${BASE}"
+# Create only the tags that don't exist yet, so re-runs add missing module tags
+# (e.g. a new submodule at an already-released shared version) instead of aborting.
+TAGS=""
+for m in $MODULES; do
+	t="$(tag_for "$m" "$(ver_for "$m")")"
+	if git rev-parse -q --verify "refs/tags/$t" >/dev/null 2>&1; then
+		echo "tag $t already exists; skipping"
+		continue
+	fi
+	git tag -a "$t" -m "$t"
+	TAGS="$TAGS $t"
+	echo "tagged $t"
+done
+
+if [ -z "$TAGS" ]; then
+	echo "no new tags to create; nothing to release"
+	exit 0
+fi
+
+if [ "$NO_PUSH" -eq 1 ]; then
+	echo "--no-push: created tag(s) locally; not pushed:$TAGS"
+	echo "  git push $REMOTE $branch && git push $REMOTE $TAGS"
+	exit 0
+fi
+git push "$REMOTE" "$branch"
+git push "$REMOTE" $TAGS
+echo "released $VERSION"
