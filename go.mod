@@ -4,7 +4,8 @@ go 1.25.0
 
 require (
 	github.com/vmihailenco/msgpack/v5 v5.4.1
-	go.arpabet.com/glue v1.5.0
+	go.arpabet.com/glue v1.5.1
+	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da
 	google.golang.org/protobuf v1.36.11
 )
 

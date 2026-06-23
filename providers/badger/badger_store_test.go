@@ -9,7 +9,7 @@ import (
 	"context"
 	"go.arpabet.com/store/providers/badger"
 	"go.arpabet.com/store"
-	"github.com/pkg/errors"
+	"golang.org/x/xerrors"
 	"github.com/stretchr/testify/require"
 	"os"
 	"testing"
@@ -57,7 +57,7 @@ func populateData(store store.TransactionalDataStore) (err error) {
 	value, err := store.Get(ctx).ByKey("test").ToString()
 
 	if value != "abc" {
-		err = errors.Errorf("value not found")
+		err = xerrors.Errorf("value not found")
 	}
 
 	return

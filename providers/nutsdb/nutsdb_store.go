@@ -11,7 +11,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"github.com/nutsdb/nutsdb"
-	pkgerrors "github.com/pkg/errors"
+	"golang.org/x/xerrors"
 	"go.arpabet.com/store"
 	"reflect"
 	"sort"
@@ -27,7 +27,7 @@ type implNutsdbStore struct {
 
 func New(name string, dataDir string, options ...Option) (*implNutsdbStore, error) {
 	if name == "" {
-		return nil, pkgerrors.New("empty bean name")
+		return nil, xerrors.New("empty bean name")
 	}
 	db, err := OpenDatabase(dataDir, options...)
 	if err != nil {

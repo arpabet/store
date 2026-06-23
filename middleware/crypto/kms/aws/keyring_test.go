@@ -9,7 +9,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
-	"errors"
+	"golang.org/x/xerrors"
 	"io"
 	"testing"
 
@@ -32,7 +32,7 @@ var fakePrefix = []byte("FAKEKMS:")
 
 func (f *fakeKMS) GenerateDataKey(ctx context.Context, in *kms.GenerateDataKeyInput, _ ...func(*kms.Options)) (*kms.GenerateDataKeyOutput, error) {
 	if in.KeyId == nil || *in.KeyId == "" {
-		return nil, errors.New("fakekms: missing KeyId")
+		return nil, xerrors.New("fakekms: missing KeyId")
 	}
 	key := make([]byte, 32)
 	if _, err := io.ReadFull(rand.Reader, key); err != nil {
@@ -44,7 +44,7 @@ func (f *fakeKMS) GenerateDataKey(ctx context.Context, in *kms.GenerateDataKeyIn
 
 func (f *fakeKMS) Decrypt(ctx context.Context, in *kms.DecryptInput, _ ...func(*kms.Options)) (*kms.DecryptOutput, error) {
 	if !bytes.HasPrefix(in.CiphertextBlob, fakePrefix) {
-		return nil, errors.New("fakekms: invalid ciphertext blob")
+		return nil, xerrors.New("fakekms: invalid ciphertext blob")
 	}
 	return &kms.DecryptOutput{Plaintext: in.CiphertextBlob[len(fakePrefix):], KeyId: in.KeyId}, nil
 }

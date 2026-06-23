@@ -8,7 +8,7 @@ package gcpkms_test
 import (
 	"bytes"
 	"context"
-	"errors"
+	"golang.org/x/xerrors"
 	"testing"
 
 	kmspb "cloud.google.com/go/kms/apiv1/kmspb"
@@ -30,7 +30,7 @@ var fakePrefix = []byte("FAKEGCP:")
 
 func (f *fakeKMS) Encrypt(ctx context.Context, req *kmspb.EncryptRequest, _ ...gax.CallOption) (*kmspb.EncryptResponse, error) {
 	if req.Name == "" {
-		return nil, errors.New("fakekms: missing Name")
+		return nil, xerrors.New("fakekms: missing Name")
 	}
 	ct := append(append([]byte{}, fakePrefix...), req.Plaintext...)
 	return &kmspb.EncryptResponse{Name: req.Name, Ciphertext: ct}, nil
@@ -38,7 +38,7 @@ func (f *fakeKMS) Encrypt(ctx context.Context, req *kmspb.EncryptRequest, _ ...g
 
 func (f *fakeKMS) Decrypt(ctx context.Context, req *kmspb.DecryptRequest, _ ...gax.CallOption) (*kmspb.DecryptResponse, error) {
 	if !bytes.HasPrefix(req.Ciphertext, fakePrefix) {
-		return nil, errors.New("fakekms: invalid ciphertext")
+		return nil, xerrors.New("fakekms: invalid ciphertext")
 	}
 	return &kmspb.DecryptResponse{Plaintext: req.Ciphertext[len(fakePrefix):]}, nil
 }

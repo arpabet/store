@@ -6,12 +6,12 @@
 package memstore
 
 import (
-	"errors"
+	"golang.org/x/xerrors"
 	"time"
 )
 
 var (
-	ErrCanceled         = errors.New("operation was canceled")
+	ErrCanceled         = xerrors.New("operation was canceled")
 )
 
 type Config struct {

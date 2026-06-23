@@ -17,7 +17,7 @@ package agekeyring
 import (
 	"bytes"
 	"crypto/rand"
-	"errors"
+	"golang.org/x/xerrors"
 	"io"
 	"sync"
 
@@ -31,8 +31,8 @@ var _ cryptostore.Keyring = (*Keyring)(nil)
 const dataKeySize = 32 // AES-256
 
 var (
-	ErrNoRecipients = errors.New("agekeyring: no recipients to wrap data key")
-	ErrNoIdentities = errors.New("agekeyring: no identities to unwrap data key")
+	ErrNoRecipients = xerrors.New("agekeyring: no recipients to wrap data key")
+	ErrNoIdentities = xerrors.New("agekeyring: no identities to unwrap data key")
 )
 
 // Keyring wraps/unwraps cryptostore data keys with age. It is safe for

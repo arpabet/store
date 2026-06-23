@@ -10,7 +10,7 @@ import (
 	"encoding/binary"
 	"go.arpabet.com/store"
 	"github.com/dgraph-io/badger/v4"
-	"github.com/pkg/errors"
+	"golang.org/x/xerrors"
 	"io"
 	"reflect"
 	"time"
@@ -27,7 +27,7 @@ type implBadgerStore struct {
 func New(name string, dataDir string, options ...Option) (*implBadgerStore, error) {
 
 	if name == "" {
-		return nil, errors.New("empty bean name")
+		return nil, xerrors.New("empty bean name")
 	}
 
 	db, opts, err := OpenDatabase(dataDir, options...)

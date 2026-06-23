@@ -6,7 +6,7 @@
 package badgerstore
 
 import (
-	"errors"
+	"golang.org/x/xerrors"
 	"github.com/dgraph-io/badger/v4"
 	"github.com/dgraph-io/badger/v4/options"
 	"go.uber.org/zap"
@@ -18,8 +18,8 @@ var (
 	DefaultValueLogMaxEntries  = uint32(1024 * 1024 * 1024)
 	DefaultKeyRotationDuration = time.Hour * 24 * 7
 
-	ErrTransactionCanceled         = errors.New("transaction was canceled")
-	ErrInvalidTransactionInContext = errors.New("incompatible transaction in context")
+	ErrTransactionCanceled         = xerrors.New("transaction was canceled")
+	ErrInvalidTransactionInContext = xerrors.New("incompatible transaction in context")
 )
 
 type StoreOptions struct {

@@ -9,7 +9,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
-	"github.com/pkg/errors"
+	"golang.org/x/xerrors"
 	"github.com/rosedblabs/rosedb/v2"
 	"go.arpabet.com/store"
 	"io"
@@ -32,7 +32,7 @@ type implRosedbStore struct {
 
 func New(name string, dataDir string, options ...Option) (*implRosedbStore, error) {
 	if name == "" {
-		return nil, errors.New("empty bean name")
+		return nil, xerrors.New("empty bean name")
 	}
 	db, err := OpenDatabase(dataDir, options...)
 	if err != nil {

@@ -30,14 +30,14 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"encoding/binary"
-	"errors"
+	"golang.org/x/xerrors"
 	"io"
 	"sync"
 
 	"go.arpabet.com/store"
 )
 
-var ErrCiphertextTooShort = errors.New("cryptostore: ciphertext too short")
+var ErrCiphertextTooShort = xerrors.New("cryptostore: ciphertext too short")
 
 const keyIDHeaderLen = 4
 

@@ -6,7 +6,7 @@
 package nutsdbstore
 
 import (
-	"errors"
+	"golang.org/x/xerrors"
 	"github.com/nutsdb/nutsdb"
 	"reflect"
 	"time"
@@ -23,7 +23,7 @@ var (
 	// which OrderedCapability relies on.
 	bucketDataStructure = nutsdb.DataStructureBTree
 
-	ErrInvalidTransactionInContext = errors.New("incompatible transaction in context")
+	ErrInvalidTransactionInContext = xerrors.New("incompatible transaction in context")
 )
 
 // Option configures the underlying nutsdb.Options using the functional options

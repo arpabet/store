@@ -6,13 +6,13 @@
 package cryptostore
 
 import (
-	"errors"
+	"golang.org/x/xerrors"
 	"sync"
 )
 
 var (
-	ErrNoActiveKey  = errors.New("cryptostore: keyring has no active key")
-	ErrUnknownKeyID = errors.New("cryptostore: unknown key id")
+	ErrNoActiveKey  = xerrors.New("cryptostore: keyring has no active key")
+	ErrUnknownKeyID = xerrors.New("cryptostore: unknown key id")
 )
 
 /**

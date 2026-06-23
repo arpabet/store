@@ -7,14 +7,14 @@ package pebblestore
 
 import (
 	"github.com/cockroachdb/pebble/v2"
-	"github.com/pkg/errors"
+	"golang.org/x/xerrors"
 )
 
 var (
 
 	WriteOptions = pebble.NoSync
 
-	ErrInvalidFormat     = errors.New("invalid format")
-	ErrOperationCanceled = errors.New("operation was canceled")
+	ErrInvalidFormat     = xerrors.New("invalid format")
+	ErrOperationCanceled = xerrors.New("operation was canceled")
 )
 

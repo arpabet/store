@@ -2,8 +2,13 @@ go 1.25.8
 
 use (
 	.
-	./storetest
 	./benchmarks
+	./middleware/compress
+	./middleware/crypto
+	./middleware/crypto/age
+	./middleware/crypto/kms/aws
+	./middleware/crypto/kms/gcp
+	./middleware/otel
 	./providers/badger
 	./providers/bbolt
 	./providers/bolt
@@ -11,10 +16,5 @@ use (
 	./providers/nutsdb
 	./providers/pebble
 	./providers/rosedb
-	./middleware/crypto
-	./middleware/compress
-	./middleware/otel
-	./middleware/crypto/age
-	./middleware/crypto/kms/aws
-	./middleware/crypto/kms/gcp
+	./storetest
 )

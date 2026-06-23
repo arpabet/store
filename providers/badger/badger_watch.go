@@ -7,7 +7,7 @@ package badgerstore
 
 import (
 	"context"
-	"errors"
+	"golang.org/x/xerrors"
 	"github.com/dgraph-io/badger/v4"
 	"github.com/dgraph-io/badger/v4/pb"
 	"go.arpabet.com/store"
@@ -19,7 +19,7 @@ import (
 // produces an event with UserMeta 0.
 const valueUserMeta byte = 0x1
 
-var errWatchStop = errors.New("watch stopped by callback")
+var errWatchStop = xerrors.New("watch stopped by callback")
 
 func (t *implBadgerStore) Features() store.Capability {
 	caps := store.TTLCapability | store.AtomicCapability | store.TransactionCapability |

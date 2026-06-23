@@ -10,7 +10,7 @@ import (
 	"context"
 	"encoding/binary"
 	"go.arpabet.com/store"
-	"github.com/pkg/errors"
+	"golang.org/x/xerrors"
 	bolt "go.etcd.io/bbolt"
 	"io"
 	"os"
@@ -32,7 +32,7 @@ type implBoltStore struct {
 func New(name string, dataFile string, dataFilePerm os.FileMode, options... Option) (*implBoltStore, error) {
 
 	if name == "" {
-		return nil, errors.New("empty bean name")
+		return nil, xerrors.New("empty bean name")
 	}
 
 	db, err := OpenDatabase(dataFile, dataFilePerm, options...)
@@ -370,7 +370,7 @@ func (t*implBoltStore) doEnumerateRaw(prefix, seek []byte, batchSize int, onlyKe
 	bucketSeek, _ := t.parseKey(seek)
 
 	if !bytes.Equal(bucketPrefix, bucketSeek) {
-		return errors.Errorf("seek has bucket '%s' whereas prefix has bucket '%s'", string(bucketSeek), string(bucketPrefix))
+		return xerrors.Errorf("seek has bucket '%s' whereas prefix has bucket '%s'", string(bucketSeek), string(bucketPrefix))
 	}
 
 	return t.db.View(func(tx *bolt.Tx) error {

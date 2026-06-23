@@ -6,7 +6,7 @@
 package boltstore
 
 import (
-	"errors"
+	"golang.org/x/xerrors"
 	"github.com/boltdb/bolt"
 	"time"
 )
@@ -15,9 +15,9 @@ var (
 
 	BucketSeparator = byte(':')
 
-	ErrDatabaseReadOnly = errors.New("readonly")
-	ErrInvalidSeek      = errors.New("invalid seek")
-	ErrCanceled         = errors.New("operation was canceled")
+	ErrDatabaseReadOnly = xerrors.New("readonly")
+	ErrInvalidSeek      = xerrors.New("invalid seek")
+	ErrCanceled         = xerrors.New("operation was canceled")
 )
 
 
