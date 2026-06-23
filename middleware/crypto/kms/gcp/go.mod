@@ -6,10 +6,10 @@ require (
 	cloud.google.com/go/kms v1.31.0
 	github.com/googleapis/gax-go/v2 v2.22.0
 	github.com/stretchr/testify v1.11.1
-	go.arpabet.com/store v1.3.0
-	go.arpabet.com/store/middleware/crypto v1.3.0
-	go.arpabet.com/store/providers/mem v1.3.0
-	go.arpabet.com/store/storetest v1.3.0
+	go.arpabet.com/store v1.3.1
+	go.arpabet.com/store/middleware/crypto v1.3.1
+	go.arpabet.com/store/providers/mem v1.3.1
+	go.arpabet.com/store/storetest v1.3.1
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da
 )
 

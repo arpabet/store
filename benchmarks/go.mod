@@ -3,16 +3,16 @@ module go.arpabet.com/store/benchmarks
 go 1.25.0
 
 require (
-	go.arpabet.com/store v1.3.0
-	go.arpabet.com/store/middleware/crypto v1.3.0
-	go.arpabet.com/store/providers/badger v1.3.0
-	go.arpabet.com/store/providers/bbolt v1.3.0
-	go.arpabet.com/store/providers/bolt v1.3.0
-	go.arpabet.com/store/providers/mem v1.3.0
-	go.arpabet.com/store/providers/nutsdb v1.3.0
-	go.arpabet.com/store/providers/pebble v1.3.0
-	go.arpabet.com/store/providers/rosedb v1.3.0
-	go.arpabet.com/store/storetest v1.3.0
+	go.arpabet.com/store v1.3.1
+	go.arpabet.com/store/middleware/crypto v1.3.1
+	go.arpabet.com/store/providers/badger v1.3.1
+	go.arpabet.com/store/providers/bbolt v1.3.1
+	go.arpabet.com/store/providers/bolt v1.3.1
+	go.arpabet.com/store/providers/mem v1.3.1
+	go.arpabet.com/store/providers/nutsdb v1.3.1
+	go.arpabet.com/store/providers/pebble v1.3.1
+	go.arpabet.com/store/providers/rosedb v1.3.1
+	go.arpabet.com/store/storetest v1.3.1
 )
 
 require (
