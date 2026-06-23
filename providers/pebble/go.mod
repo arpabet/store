@@ -5,8 +5,8 @@ go 1.25.0
 require (
 	github.com/cockroachdb/pebble/v2 v2.1.6
 	github.com/stretchr/testify v1.11.1
-	go.arpabet.com/store v1.3.0
-	go.arpabet.com/store/storetest v1.3.0
+	go.arpabet.com/store v1.3.1
+	go.arpabet.com/store/storetest v1.3.1
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da
 )
 

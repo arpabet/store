@@ -2,7 +2,6 @@ github.com/BurntSushi/toml v1.6.0 h1:dRaEfpa2VI55EwlIW72hMRHdWouJeRF7TPYhI+AUQjk
 github.com/BurntSushi/toml v1.6.0/go.mod h1:ukJfTF/6rtPPRCnwkur4qwRxa8vTRFBF0uk2lLoLwho=
 github.com/boltdb/bolt v1.3.1 h1:JQmyP4ZBrce+ZQu0dY660FMfatumYDLun9hBCUVIkF4=
 github.com/boltdb/bolt v1.3.1/go.mod h1:clJnj/oiGkjum5o1McbSZDSLxVThjynRyGBgiAx27Ps=
-github.com/creack/pty v1.1.9/go.mod h1:oKZEueFk5CKHvIhNR5MUki03XCEU+Q6VDXinZuGJ33E=
 github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc h1:U9qPSI2PIWSS1VwoXQT9A3Wy9MM3WgvqSxFWenqJduM=
 github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/google/go-cmp v0.7.0 h1:wk8382ETsv4JYUZwIsn6YpYiWiBsYLSJiTsyBybVuN8=
@@ -23,10 +22,10 @@ github.com/vmihailenco/tagparser/v2 v2.0.0 h1:y09buUbR+b5aycVFQs/g70pqKVZNBmxwAh
 github.com/vmihailenco/tagparser/v2 v2.0.0/go.mod h1:Wri+At7QHww0WTrCBeu4J6bNtoV6mEfg5OIWRZA9qds=
 go.arpabet.com/glue v1.5.1 h1:5g74cCXAPnn8sVCtL4izvUtL8oY0hZt0fT7eoJFRnrQ=
 go.arpabet.com/glue v1.5.1/go.mod h1:XNU9oIbp7SVmCRD6itFyx0O9WgUgGi/Nm06ojVZ9WGY=
-go.arpabet.com/store v1.3.0 h1:LKdWAp0i21h7rvCH62OZn45qz8Dj00sdDp2KdhY3Qk8=
-go.arpabet.com/store v1.3.0/go.mod h1:fuMky3S9iITwG5ybQdsr7LpvAue+NqqU/K5HbAOmflM=
-go.arpabet.com/store/storetest v1.3.0 h1:Qd6gTkVA8/Y1AreztsXkwsreLco0YeTfHr410jf3Bkk=
-go.arpabet.com/store/storetest v1.3.0/go.mod h1:b4ytQCBlGhzqN6oePoaoPqiCyuQEozg6GIRQxVttgL4=
+go.arpabet.com/store v1.3.1 h1:bP8WPtv0qV5h1Z+Q1fVEQCZ2lWjj5Ikd2DDoe1IjPfM=
+go.arpabet.com/store v1.3.1/go.mod h1:fm9ZZll0sbqf223CoqMC1isUQP1MYJ73t7FT9nHrYqs=
+go.arpabet.com/store/storetest v1.3.1 h1:B+UaZOGdsjk1KkqXCkU5Lh/v4xEl6cLQ6icTx9FEBR4=
+go.arpabet.com/store/storetest v1.3.1/go.mod h1:HoXpOuI6qiIclxeQNHy3I0X+o5cj0Uj04Fg9ofmxMSU=
 golang.org/x/sys v0.46.0 h1:noSf2Fq6F8DBgS+LysIkx7rIExoNHJsxOAtPp4rthXw=
 golang.org/x/sys v0.46.0/go.mod h1:4GL1E5IUh+htKOUEOaiffhrAeqysfVGipDYzABqnCmw=
 golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da h1:noIWHXmPHxILtqtCOPIhSt0ABwskkZKjD3bXGnZGpNY=
