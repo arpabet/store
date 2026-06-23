@@ -21,8 +21,8 @@ github.com/vmihailenco/tagparser/v2 v2.0.0 h1:y09buUbR+b5aycVFQs/g70pqKVZNBmxwAh
 github.com/vmihailenco/tagparser/v2 v2.0.0/go.mod h1:Wri+At7QHww0WTrCBeu4J6bNtoV6mEfg5OIWRZA9qds=
 go.arpabet.com/glue v1.5.1 h1:5g74cCXAPnn8sVCtL4izvUtL8oY0hZt0fT7eoJFRnrQ=
 go.arpabet.com/glue v1.5.1/go.mod h1:XNU9oIbp7SVmCRD6itFyx0O9WgUgGi/Nm06ojVZ9WGY=
-go.arpabet.com/store v1.3.0 h1:LKdWAp0i21h7rvCH62OZn45qz8Dj00sdDp2KdhY3Qk8=
-go.arpabet.com/store v1.3.0/go.mod h1:fuMky3S9iITwG5ybQdsr7LpvAue+NqqU/K5HbAOmflM=
+go.arpabet.com/store v1.3.1 h1:bP8WPtv0qV5h1Z+Q1fVEQCZ2lWjj5Ikd2DDoe1IjPfM=
+go.arpabet.com/store v1.3.1/go.mod h1:fm9ZZll0sbqf223CoqMC1isUQP1MYJ73t7FT9nHrYqs=
 golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da h1:noIWHXmPHxILtqtCOPIhSt0ABwskkZKjD3bXGnZGpNY=
 golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da/go.mod h1:NDW/Ps6MPRej6fsCIbMTohpP40sJ/P/vI1MoTEGwX90=
 google.golang.org/protobuf v1.36.11 h1:fV6ZwhNocDyBLK0dj+fg8ektcVegBBuEolpbTQyBNVE=
